@@ -1,6 +1,12 @@
 import { useState } from "react";
-import type { FormEvent, ChangeEvent } from "react";
-import "./App.css";
+import type { ChangeEvent, FormEvent } from "react";
+
+import Container from "@mui/material/Container";
+import Box from "@mui/material/Box";
+import Typography from "@mui/material/Typography";
+import TextField from "@mui/material/TextField";
+import Button from "@mui/material/Button";
+import Alert from "@mui/material/Alert";
 
 type FormData = {
   firstName: string;
@@ -12,7 +18,7 @@ type FormData = {
 
 type FormErrors = Partial<Record<keyof FormData, string>>;
 
-function App() {
+export default function App() {
   const [formData, setFormData] = useState<FormData>({
     firstName: "",
     lastName: "",
@@ -24,9 +30,7 @@ function App() {
   const [errors, setErrors] = useState<FormErrors>({});
   const [submitted, setSubmitted] = useState(false);
 
-  const handleChange = (
-    event: ChangeEvent<HTMLInputElement>
-  ) => {
+  const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
     const { name, value } = event.target;
 
     setFormData((prev) => ({
@@ -34,7 +38,6 @@ function App() {
       [name]: value,
     }));
 
-    // On efface l’erreur au fur et à mesure que l’utilisateur corrige
     setErrors((prev) => ({
       ...prev,
       [name]: "",
@@ -47,26 +50,21 @@ function App() {
     if (!formData.firstName.trim()) {
       newErrors.firstName = "Le prénom est obligatoire.";
     }
-
     if (!formData.lastName.trim()) {
       newErrors.lastName = "Le nom est obligatoire.";
     }
-
     if (!formData.email.trim()) {
-      newErrors.email = "L’adresse e-mail est obligatoire.";
+      newErrors.email = "L'adresse e-mail est obligatoire.";
     } else if (!/^\S+@\S+\.\S+$/.test(formData.email)) {
       newErrors.email = "Adresse e-mail invalide.";
     }
-
     if (!formData.password) {
       newErrors.password = "Le mot de passe est obligatoire.";
     } else if (formData.password.length < 6) {
-      newErrors.password = "Le mot de passe doit contenir au moins 6 caractères.";
+      newErrors.password =
+        "Le mot de passe doit contenir au moins 6 caractères.";
     }
-
-    if (!formData.confirmPassword) {
-      newErrors.confirmPassword = "Veuillez confirmer le mot de passe.";
-    } else if (formData.confirmPassword !== formData.password) {
+    if (formData.confirmPassword !== formData.password) {
       newErrors.confirmPassword = "Les mots de passe ne correspondent pas.";
     }
 
@@ -74,7 +72,7 @@ function App() {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = (event: FormEvent) => {
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     if (!validate()) {
@@ -82,110 +80,95 @@ function App() {
       return;
     }
 
-    // Ici tu pourrais envoyer les données vers une API plus tard.
-    console.log("Formulaire soumis :", formData);
+    console.log("Inscription réussie :", formData);
     setSubmitted(true);
   };
 
   return (
-    <div className="app-container">
-      <div className="form-card">
-        <h1>Inscription</h1>
-        <p className="subtitle">
+    <Container maxWidth="sm">
+      <Box sx={{ mt: 6 }}>
+        <Typography variant="h4" component="h1" gutterBottom>
+          Inscription
+        </Typography>
+        <Typography variant="body1" sx={{ mb: 3, color: "gray" }}>
           Remplis le formulaire pour créer ton compte.
-        </p>
+        </Typography>
 
-        <form onSubmit={handleSubmit} noValidate>
-          <div className="form-row">
-            <div className="form-field">
-              <label htmlFor="firstName">Prénom</label>
-              <input
-                id="firstName"
-                name="firstName"
-                type="text"
-                value={formData.firstName}
-                onChange={handleChange}
-                placeholder="Jean"
-              />
-              {errors.firstName && (
-                <p className="error">{errors.firstName}</p>
-              )}
-            </div>
+        {submitted && (
+          <Alert severity="success" sx={{ mb: 3 }}>
+            Inscription envoyée !
+          </Alert>
+        )}
 
-            <div className="form-field">
-              <label htmlFor="lastName">Nom</label>
-              <input
-                id="lastName"
-                name="lastName"
-                type="text"
-                value={formData.lastName}
-                onChange={handleChange}
-                placeholder="Dupont"
-              />
-              {errors.lastName && (
-                <p className="error">{errors.lastName}</p>
-              )}
-            </div>
-          </div>
-
-          <div className="form-field">
-            <label htmlFor="email">Adresse e-mail</label>
-            <input
-              id="email"
-              name="email"
-              type="email"
-              value={formData.email}
+        <Box component="form" noValidate onSubmit={handleSubmit}>
+          <Box sx={{ display: "flex", gap: 2 }}>
+            <TextField
+              fullWidth
+              label="Prénom"
+              name="firstName"
+              value={formData.firstName}
               onChange={handleChange}
-              placeholder="jean.dupont@example.com"
+              error={Boolean(errors.firstName)}
+              helperText={errors.firstName}
             />
-            {errors.email && <p className="error">{errors.email}</p>}
-          </div>
-
-          <div className="form-field">
-            <label htmlFor="password">Mot de passe</label>
-            <input
-              id="password"
-              name="password"
-              type="password"
-              value={formData.password}
+            <TextField
+              fullWidth
+              label="Nom"
+              name="lastName"
+              value={formData.lastName}
               onChange={handleChange}
-              placeholder="••••••••"
+              error={Boolean(errors.lastName)}
+              helperText={errors.lastName}
             />
-            {errors.password && (
-              <p className="error">{errors.password}</p>
-            )}
-          </div>
+          </Box>
 
-          <div className="form-field">
-            <label htmlFor="confirmPassword">
-              Confirmation du mot de passe
-            </label>
-            <input
-              id="confirmPassword"
-              name="confirmPassword"
-              type="password"
-              value={formData.confirmPassword}
-              onChange={handleChange}
-              placeholder="••••••••"
-            />
-            {errors.confirmPassword && (
-              <p className="error">{errors.confirmPassword}</p>
-            )}
-          </div>
+          <TextField
+            fullWidth
+            label="Adresse e-mail"
+            name="email"
+            type="email"
+            sx={{ mt: 2 }}
+            value={formData.email}
+            onChange={handleChange}
+            error={Boolean(errors.email)}
+            helperText={errors.email}
+          />
 
-          <button type="submit" className="submit-button">
+          <TextField
+            fullWidth
+            label="Mot de passe"
+            name="password"
+            type="password"
+            sx={{ mt: 2 }}
+            value={formData.password}
+            onChange={handleChange}
+            error={Boolean(errors.password)}
+            helperText={errors.password}
+          />
+
+          <TextField
+            fullWidth
+            label="Confirmer le mot de passe"
+            name="confirmPassword"
+            type="password"
+            sx={{ mt: 2 }}
+            value={formData.confirmPassword}
+            onChange={handleChange}
+            error={Boolean(errors.confirmPassword)}
+            helperText={errors.confirmPassword}
+          />
+
+          <Button
+            type="submit"
+            variant="contained"
+            color="primary"
+            sx={{ mt: 3 }}
+            fullWidth
+          >
             S’inscrire
-          </button>
-
-          {submitted && (
-            <p className="success-message">
-              Inscription envoyée (voir la console du navigateur) !
-            </p>
-          )}
-        </form>
-      </div>
-    </div>
+          </Button>
+        </Box>
+      </Box>
+    </Container>
   );
 }
-
-export default App;
