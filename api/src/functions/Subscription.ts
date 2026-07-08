@@ -60,6 +60,17 @@ const INVITE_REDIRECT_URL = process.env["INVITE_REDIRECT_URL"];
 const NN_CHECKSUM_STRICT =
   (process.env["NN_CHECKSUM_STRICT"] ?? "false").toLowerCase() === "true";
 
+// Message générique renvoyé au client. Le détail technique reste uniquement
+// dans les logs serveur pour éviter toute fuite d'information vers l'utilisateur.
+const GENERIC_SERVER_ERROR =
+  "Une erreur est survenue lors du traitement de votre demande. Veuillez réessayer plus tard.";
+
+// Refus d'éligibilité volontairement neutre : ne confirme pas qu'il s'agit
+// spécifiquement du numéro national (évite l'oracle d'éligibilité - test T03).
+const GENERIC_INELIGIBLE =
+  "Nous ne pouvons pas donner suite à votre demande avec les informations fournies. " +
+  "Si vous pensez qu'il s'agit d'une erreur, contactez le service concerné.";
+
 // ⚠️ DEBUG TEMPORAIRE — à retirer après diagnostic.
 // Si DEBUG_ERRORS=true (variable d'environnement), les réponses 500 incluent
 // le détail de l'erreur. NE JAMAIS laisser activé en usage réel.
@@ -91,17 +102,6 @@ function maskEmail(email?: string): string {
   if (!domain) return "***";
   return `${user.slice(0, 1)}***@${domain}`;
 }
-
-// Message générique renvoyé au client. Le détail technique reste uniquement
-// dans les logs serveur pour éviter toute fuite d'information vers l'utilisateur.
-const GENERIC_SERVER_ERROR =
-  "Une erreur est survenue lors du traitement de votre demande. Veuillez réessayer plus tard.";
-
-// Refus d'éligibilité volontairement neutre : ne confirme pas qu'il s'agit
-// spécifiquement du numéro national (évite l'oracle d'éligibilité - test T03).
-const GENERIC_INELIGIBLE =
-  "Nous ne pouvons pas donner suite à votre demande avec les informations fournies. " +
-  "Si vous pensez qu'il s'agit d'une erreur, contactez le service concerné.";
 
 // ---------- Validation du numéro national ----------
 
@@ -173,7 +173,9 @@ async function isNationalIdInSharePointList(
   if (!siteResponse.ok) {
     // On NE logge PAS le corps de réponse (peut contenir des infos sensibles).
     context.log("Erreur récupération site SharePoint, statut:", siteResponse.status);
-    throw new Error("Impossible de récupérer le site SharePoint.");
+    throw new Error(
+      `Impossible de récupérer le site SharePoint (statut ${siteResponse.status}).`
+    );
   }
 
   const siteJson = (await siteResponse.json()) as { id: string };
@@ -201,7 +203,7 @@ async function isNationalIdInSharePointList(
       listResponse.status
     );
     throw new Error(
-      "Impossible d'interroger la liste SharePoint pour la vérification d'éligibilité."
+      `Impossible d'interroger la liste SharePoint (statut ${listResponse.status}).`
     );
   }
 
@@ -260,7 +262,9 @@ async function getGraphToken(context: InvocationContext): Promise<string> {
   if (!response.ok) {
     // On ne logge pas le corps : il peut contenir des détails sur le secret/app.
     context.log("Erreur d'obtention du token Graph, statut:", response.status);
-    throw new Error("Impossible d'obtenir un jeton d'accès Microsoft Graph.");
+    throw new Error(
+      `Impossible d'obtenir un jeton d'accès Microsoft Graph (statut ${response.status}).`
+    );
   }
 
   const json = (await response.json()) as { access_token: string };
@@ -325,7 +329,9 @@ async function createExternalUser(
   if (!response.ok) {
     // Détail technique en log uniquement, pas renvoyé au client.
     context.log("Erreur Graph /invitations, statut:", response.status, text);
-    throw new Error("Impossible de créer / inviter le compte externe dans Entra.");
+    throw new Error(
+      `Impossible de créer / inviter le compte externe dans Entra (statut ${response.status}).`
+    );
   }
 
   type InvitationResponse = {
@@ -471,7 +477,7 @@ export async function CheckEmail(
     return { status: 200, jsonBody: { exists } };
   } catch (error) {
     context.log("Erreur dans /check-email:", error);
-   return { status: 500, jsonBody: buildErrorBody(error) };
+    return { status: 500, jsonBody: buildErrorBody(error) };
   }
 }
 
@@ -552,9 +558,10 @@ export async function Subscription(
       },
     };
   } catch (error) {
-    // Détail uniquement en log, message générique au client.
+    // Détail uniquement en log, message générique au client
+    // (+ champ debug si DEBUG_ERRORS=true — temporaire).
     context.log("Erreur dans /pre-inscription:", error);
-    return { status: 500, jsonBody: { message: GENERIC_SERVER_ERROR } };
+    return { status: 500, jsonBody: buildErrorBody(error) };
   }
 }
 
