@@ -30,6 +30,23 @@ type FormData = {
 
 type FormErrors = Partial<Record<keyof FormData, string>>;
 
+// Libellés propres au bandeau « déjà inscrit » (gardés ici pour ne pas
+// alourdir translations.ts — même approche que les labels de Portail.tsx).
+const portalAccessLabels = {
+  fr: {
+    question: "Vous êtes déjà inscrit(e) ?",
+    cta: "Accéder à mon espace",
+  },
+  nl: {
+    question: "Bent u al ingeschreven?",
+    cta: "Naar mijn portaal",
+  },
+  en: {
+    question: "Already registered?",
+    cta: "Go to my portal",
+  },
+} as const;
+
 // --- Petits composants réutilisables -----------------------------------------
 
 /** Sélecteur de langue en pilules (utilisé pour l'interface ET la langue de contact). */
@@ -280,6 +297,16 @@ export default function App() {
         <h1 className="page-title">{t("title")}</h1>
         <div className="title-accent" aria-hidden="true" />
         <p className="page-subtitle">{t("subtitle")}</p>
+
+        {/* Accès rapide au portail pour les résidents déjà inscrits.
+            /portail redirige automatiquement vers la connexion Microsoft
+            si la personne n'est pas (ou plus) connectée. */}
+        <div className="portal-access">
+          <span>{portalAccessLabels[language].question}</span>
+          <a className="btn btn-outline" href="/portail">
+            {portalAccessLabels[language].cta}
+          </a>
+        </div>
 
         {submitted && (
           <div className="alert alert-success" role="status">

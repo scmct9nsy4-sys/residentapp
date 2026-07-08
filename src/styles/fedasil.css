@@ -371,6 +371,25 @@ body {
   margin: 0 0 10px;
 }
 
+/* Bandeau « déjà inscrit » sur la page d'accueil : texte + lien vers /portail.
+   Sert de chemin de reconnexion après une déconnexion (retour sur "/"). */
+.portal-access {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--blanc);
+  border: 1.5px solid var(--violet-25);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+}
+
+.portal-access span {
+  font-weight: 600;
+}
+
 /* --- 10. Portail (page sécurisée) -------------------------------------------- */
 
 /* Un lien stylé en bouton (ex. déconnexion vers /.auth/logout) */
