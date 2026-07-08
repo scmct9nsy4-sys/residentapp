@@ -1,16 +1,21 @@
+// =============================================================================
+// Portail.tsx — Espace sécurisé du résident (version sans MUI)
+// -----------------------------------------------------------------------------
+// La logique est inchangée : /.auth/me → redirection connexion si besoin,
+// puis /api/me → affichage des montants (états loading / ready / nodata / error).
+// Nouveautés visuelles :
+//   - Même en-tête que le formulaire (cohérence entre les deux pages),
+//     avec le sélecteur de langue désormais disponible aussi ici
+//   - Titre avec le trait rouge de la charte
+//   - Montants présentés en tuiles (grille 2 colonnes, 1 sur mobile)
+// Après remplacement de ce fichier : MUI n'est plus utilisé nulle part →
+// on pourra désinstaller @mui/* et @emotion/*.
+// =============================================================================
+
 import { useState, useEffect } from "react";
 
-import Container from "@mui/material/Container";
-import Box from "@mui/material/Box";
-import Paper from "@mui/material/Paper";
-import Typography from "@mui/material/Typography";
-import Button from "@mui/material/Button";
-import Alert from "@mui/material/Alert";
-import CircularProgress from "@mui/material/CircularProgress";
-import Divider from "@mui/material/Divider";
-import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
-
 import { useLanguage } from "./i18n/useLanguage";
+import type { Language } from "./i18n/translations";
 
 // Libellés propres à cette page (gardés ici pour ne pas alourdir translations.ts).
 const labels = {
@@ -70,8 +75,79 @@ type CumulData = {
 
 type Status = "loading" | "ready" | "nodata" | "error";
 
+// --- Petits composants de présentation ----------------------------------------
+
+/** Sélecteur de langue en pilules (copie locale de celui d'App.tsx ;
+ *  à factoriser dans src/components/ si un 3e écran apparaît un jour). */
+function LangPills({
+  value,
+  onChange,
+  ariaLabel,
+}: {
+  value: Language;
+  onChange: (lang: Language) => void;
+  ariaLabel: string;
+}) {
+  const options: Language[] = ["fr", "nl", "en"];
+  const labels: Record<Language, string> = { fr: "FR", nl: "NL", en: "EN" };
+  return (
+    <div className="lang-switch" role="group" aria-label={ariaLabel}>
+      {options.map((lang) => (
+        <button
+          key={lang}
+          type="button"
+          aria-pressed={value === lang}
+          onClick={() => onChange(lang)}
+        >
+          {labels[lang]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Coche verte (remplace CheckCircleOutlineIcon, sans dépendance). */
+function CheckIcon() {
+  return (
+    <svg
+      width="22"
+      height="22"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="10" />
+      <path d="M8 12.5l2.5 2.5L16 9" />
+    </svg>
+  );
+}
+
+/** Tuile de donnée : libellé + valeur. */
+function DataTile({
+  label,
+  value,
+  highlight = false,
+}: {
+  label: string;
+  value: string;
+  highlight?: boolean;
+}) {
+  return (
+    <div className={`data-tile${highlight ? " highlight" : ""}`}>
+      <span className="label">{label}</span>
+      <span className="value">{value || "—"}</span>
+    </div>
+  );
+}
+
+// --- Composant principal --------------------------------------------------------
+
 export default function Portail() {
-  const { language } = useLanguage();
+  const { language, setLanguage } = useLanguage();
   const t = labels[language];
 
   const [status, setStatus] = useState<Status>("loading");
@@ -123,66 +199,72 @@ export default function Portail() {
   }, []);
 
   return (
-    <Container maxWidth="sm" sx={{ py: 6 }}>
-      <Paper elevation={2} sx={{ p: { xs: 3, sm: 4 }, borderRadius: 2 }}>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mb: 1 }}>
-          <CheckCircleOutlineIcon color="success" fontSize="large" />
-          <Typography variant="h5" component="h1">
-            {t.welcome}
-          </Typography>
-        </Box>
+    <>
+      <header className="app-header">
+        {/* Logo : remplacer par le SVG officiel Fedasil quand disponible */}
+        <div className="brand">
+          <div className="brand-logo" aria-hidden="true">
+            F
+          </div>
+          <span>fedasil</span>
+        </div>
 
-        <Typography variant="body1" color="success.main" sx={{ mb: 0.5 }}>
-          {t.activated}
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-          {t.intro}
-        </Typography>
+        <LangPills
+          value={language}
+          onChange={setLanguage}
+          ariaLabel="Language / Langue / Taal"
+        />
+      </header>
 
-        <Divider sx={{ mb: 3 }} />
+      <main className="page">
+        <h1 className="page-title">{t.welcome}</h1>
+        <div className="title-accent" aria-hidden="true" />
+        <p className="page-subtitle">{t.intro}</p>
 
-        {status === "loading" && (
-          <Box sx={{ display: "flex", alignItems: "center", gap: 2, py: 2 }}>
-            <CircularProgress size={24} />
-            <Typography variant="body2">{t.loading}</Typography>
-          </Box>
-        )}
+        <div className="card">
+          <div className="alert alert-success alert-flex" role="status">
+            <CheckIcon />
+            <span>{t.activated}</span>
+          </div>
 
-        {status === "error" && <Alert severity="error">{t.error}</Alert>}
+          {status === "loading" && (
+            <div className="loading-row" role="status">
+              <span className="spinner spinner-violet" aria-hidden="true" />
+              <span>{t.loading}</span>
+            </div>
+          )}
 
-        {status === "nodata" && <Alert severity="info">{t.noData}</Alert>}
+          {status === "error" && (
+            <div className="alert alert-error" role="alert">
+              {t.error}
+            </div>
+          )}
 
-        {status === "ready" && data && (
-          <Box sx={{ display: "grid", gap: 2 }}>
-            <Field label={t.grossSalary} value={data.grossSalary} />
-            <Field label={t.netSalary} value={data.netSalary} />
-            <Field label={t.contribution} value={data.contribution} />
-            <Field label={t.paid} value={data.paid} />
-          </Box>
-        )}
+          {status === "nodata" && (
+            <div className="alert alert-info" role="status">
+              {t.noData}
+            </div>
+          )}
 
-        <Box sx={{ mt: 4, display: "flex", justifyContent: "flex-end" }}>
-          <Button
-            variant="outlined"
-            href="/.auth/logout?post_logout_redirect_uri=/"
-          >
-            {t.logout}
-          </Button>
-        </Box>
-      </Paper>
-    </Container>
-  );
-}
+          {status === "ready" && data && (
+            <div className="data-grid">
+              <DataTile label={t.grossSalary} value={data.grossSalary} />
+              <DataTile label={t.netSalary} value={data.netSalary} highlight />
+              <DataTile label={t.contribution} value={data.contribution} />
+              <DataTile label={t.paid} value={data.paid} />
+            </div>
+          )}
 
-function Field({ label, value }: { label: string; value: string }) {
-  return (
-    <Box>
-      <Typography variant="caption" color="text.secondary">
-        {label}
-      </Typography>
-      <Typography variant="body1" sx={{ fontWeight: 500 }}>
-        {value || "—"}
-      </Typography>
-    </Box>
+          <div className="card-footer">
+            <a
+              className="btn btn-outline"
+              href="/.auth/logout?post_logout_redirect_uri=/"
+            >
+              {t.logout}
+            </a>
+          </div>
+        </div>
+      </main>
+    </>
   );
 }

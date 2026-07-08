@@ -370,3 +370,81 @@ body {
   color: var(--gris);
   margin: 0 0 10px;
 }
+
+/* --- 10. Portail (page sécurisée) -------------------------------------------- */
+
+/* Un lien stylé en bouton (ex. déconnexion vers /.auth/logout) */
+a.btn {
+  text-decoration: none;
+}
+
+/* Spinner sur fond clair (hors bouton violet) */
+.spinner-violet {
+  border-color: var(--violet-25);
+  border-top-color: var(--violet);
+}
+
+/* Ligne de chargement : spinner + texte */
+.loading-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  color: var(--gris);
+}
+
+/* Message d'état avec icône (ex. « accès activé ») */
+.alert-flex {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.alert-flex svg {
+  flex-shrink: 0;
+}
+
+/* Grille des montants : 2 colonnes, 1 seule sur mobile */
+.data-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 420px) {
+  .data-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Tuile de donnée : libellé discret + valeur bien lisible */
+.data-tile {
+  background: var(--violet-8);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+}
+
+.data-tile .label {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--gris);
+}
+
+.data-tile .value {
+  display: block;
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+/* Variante mise en avant (ex. salaire net) */
+.data-tile.highlight .value {
+  color: var(--violet);
+}
+
+/* Pied de carte : action alignée à droite */
+.card-footer {
+  margin-top: 28px;
+  display: flex;
+  justify-content: flex-end;
+}
