@@ -736,6 +736,13 @@ button.quarter-row:hover {
   color: var(--gris);
 }
 
+/* Avertissement « un mois plus ancien reste dû » sous la carte de paiement */
+.older-due {
+  margin-top: 14px;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
 @media (max-width: 420px) {
   .quarter-row {
     flex-wrap: wrap;

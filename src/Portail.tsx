@@ -58,6 +58,9 @@ const labels = {
       "Important : utilisez uniquement cette communication structurée, sans rien ajouter ni modifier.",
     paidDelay:
       "Après votre virement, le paiement peut prendre quelques jours pour apparaître ici.",
+    monthPaid: "La cotisation de {month} est payée.",
+    olderDue: "Attention : la cotisation de {month} n'est pas encore payée.",
+    seeMonth: "Voir",
     copy: "Copier",
     copied: "Copié ✓",
     noDeclarations: "Aucune déclaration pour ce trimestre pour le moment.",
@@ -104,6 +107,9 @@ const labels = {
       "Belangrijk: gebruik uitsluitend deze gestructureerde mededeling, zonder iets toe te voegen of te wijzigen.",
     paidDelay:
       "Na uw overschrijving kan het enkele dagen duren voordat de betaling hier verschijnt.",
+    monthPaid: "De bijdrage van {month} is betaald.",
+    olderDue: "Opgelet: de bijdrage van {month} is nog niet betaald.",
+    seeMonth: "Bekijk",
     copy: "Kopiëren",
     copied: "Gekopieerd ✓",
     noDeclarations: "Nog geen aangiften voor dit kwartaal.",
@@ -150,6 +156,9 @@ const labels = {
       "Important: use only this structured communication, without adding or changing anything.",
     paidDelay:
       "After your transfer, the payment may take a few days to appear here.",
+    monthPaid: "The contribution for {month} is paid.",
+    olderDue: "Note: the contribution for {month} has not been paid yet.",
+    seeMonth: "View",
     copy: "Copy",
     copied: "Copied ✓",
     noDeclarations: "No declarations for this quarter yet.",
@@ -600,20 +609,18 @@ export default function Portail() {
   const totalPaid = current?.months.reduce((s, m) => s + (m.paid ?? 0), 0) ?? 0;
   const remaining = Math.max(0, totalToPay - totalPaid);
 
-  // Mois à payer : le plus ANCIEN dont le solde est ouvert (imputation FIFO),
-  // à condition d'avoir sa communication structurée et la config de paiement.
-  const monthToPay = current
+  // Solde du mois AFFICHÉ (le paiement suit le mois sélectionné).
+  const displayedDue = displayed
+    ? Math.max(0, (displayed.contribution ?? 0) - (displayed.paid ?? 0))
+    : 0;
+
+  // Mois impayé le plus ancien : sert d'avertissement si le résident regarde
+  // un mois plus récent alors qu'un mois antérieur reste dû (logique FIFO).
+  const oldestUnpaid = current
     ? [...current.months]
         .sort((a, b) => a.month - b.month)
-        .find(
-          (m) =>
-            (m.contribution ?? 0) - (m.paid ?? 0) > 0.005 &&
-            m.structuredCom !== null
-        ) ?? null
+        .find((m) => (m.contribution ?? 0) - (m.paid ?? 0) > 0.005) ?? null
     : null;
-  const amountToPay = monthToPay
-    ? (monthToPay.contribution ?? 0) - (monthToPay.paid ?? 0)
-    : 0;
 
   const quarterTitle = (data: MeResponse | null, base: string): string => {
     if (!data || data.quarter === null) return base;
@@ -743,17 +750,60 @@ export default function Portail() {
                     />
                   </div>
 
-                  {/* 4. Paiement : mois impayé le plus ancien (FIFO) */}
-                  {current.payment && monthToPay && monthToPay.structuredCom && (
+                  {/* 4. Paiement : suit le mois sélectionné dans la carte */}
+                  {current.payment && displayed && (
                     <>
                       <h2 className="portal-section-title">{t.payTitle}</h2>
-                      <PaymentCard
-                        month={monthToPay.month}
-                        amount={amountToPay}
-                        structuredCom={monthToPay.structuredCom}
-                        payment={current.payment}
-                        lang={language}
-                      />
+
+                      {displayedDue > 0.005 && displayed.structuredCom ? (
+                        <PaymentCard
+                          key={displayed.month}
+                          month={displayed.month}
+                          amount={displayedDue}
+                          structuredCom={displayed.structuredCom}
+                          payment={current.payment}
+                          lang={language}
+                        />
+                      ) : displayedDue <= 0.005 ? (
+                        <div
+                          className="alert alert-success alert-flex"
+                          role="status"
+                        >
+                          <CheckIcon />
+                          <span>
+                            {t.monthPaid.replace(
+                              "{month}",
+                              monthName(displayed.month, language)
+                            )}
+                          </span>
+                        </div>
+                      ) : null}
+
+                      {/* Rappel FIFO : un mois plus ancien reste dû */}
+                      {oldestUnpaid &&
+                        oldestUnpaid.month < displayed.month && (
+                          <div
+                            className="alert alert-warning alert-flex older-due"
+                            role="status"
+                          >
+                            <span>
+                              {t.olderDue.replace(
+                                "{month}",
+                                monthName(oldestUnpaid.month, language)
+                              )}
+                            </span>
+                            <button
+                              type="button"
+                              className="btn btn-outline"
+                              onClick={() =>
+                                setSelectedMonth(oldestUnpaid.month)
+                              }
+                            >
+                              {t.seeMonth}{" "}
+                              {monthName(oldestUnpaid.month, language)}
+                            </button>
+                          </div>
+                        )}
                     </>
                   )}
                 </>
