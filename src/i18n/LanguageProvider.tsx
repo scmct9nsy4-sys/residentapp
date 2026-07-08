@@ -1,17 +1,18 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useState, type ReactNode } from "react";
 import { translations, type Language, type TranslationKey } from "./translations";
 
-type LanguageContextValue = {
+export type LanguageContextValue = {
   language: Language;
   setLanguage: (lang: Language) => void;
   t: (key: TranslationKey) => string;
 };
 
-const LanguageContext = createContext<LanguageContextValue | undefined>(
+export const LanguageContext = createContext<LanguageContextValue | undefined>(
   undefined
 );
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
+  // Langue par défaut FR (cohérent avec l'usage FR/NL/EN du guide).
   const [language, setLanguage] = useState<Language>("fr");
 
   const t = (key: TranslationKey): string => {
@@ -23,12 +24,4 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
       {children}
     </LanguageContext.Provider>
   );
-}
-
-export function useLanguage(): LanguageContextValue {
-  const ctx = useContext(LanguageContext);
-  if (!ctx) {
-    throw new Error("useLanguage must be used within a LanguageProvider");
-  }
-  return ctx;
 }

@@ -19,5 +19,9 @@ export default defineConfig([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
+    //Avoid Warning "Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components"
+    rules: {
+      "react-refresh/only-export-components": "off",
+    }
   },
 ])

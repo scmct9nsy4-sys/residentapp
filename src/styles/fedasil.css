@@ -1,0 +1,372 @@
+/* =============================================================================
+   fedasil.css — Système de design ResidentApp (sans framework)
+   -----------------------------------------------------------------------------
+   Charte Fedasil :
+     - Violet #644391 = interaction (boutons, focus, liens, état actif)
+     - Rouge  #d1103b = attention (trait de titre, erreurs, liseré d'en-tête)
+     - Gris   #676362 = texte courant ; beaucoup de blanc
+     - Typo : Aptos (postes M365) → Inter (fallback web) → system-ui
+   Installation :
+     1. Placer ce fichier dans src/styles/fedasil.css
+     2. Dans main.tsx :  import "./styles/fedasil.css";
+     3. (Optionnel) npm i @fontsource/inter puis importer les graisses 400/600
+   ============================================================================= */
+
+/* --- 1. Tokens (variables de la charte) ------------------------------------ */
+:root {
+  /* Couleurs primaires */
+  --violet: #644391;
+  --violet-75: #836fa8;
+  --violet-50: #aa9dc7;
+  --violet-25: #d4cee4;
+  --violet-fonce: #4d3470;      /* dérivé : hover / pressé */
+  --violet-8: rgba(100, 67, 145, 0.08); /* fond très léger */
+
+  --rouge: #d1103b;
+  --rouge-fonce: #a30c2e;
+  --rouge-15: #fbe4e9;          /* fond des messages d'erreur */
+
+  --gris: #676362;
+  --gris-fonce: #3f3c3b;        /* titres, texte principal */
+  --gris-clair: #9b96a5;        /* placeholders */
+
+  /* Secondaires (états uniquement) */
+  --bleu-clair-25: #dbe8ef;     /* fond info */
+  --bleu-info-texte: #1e4b60;
+  --jaune-25: #fdf1d1;          /* fond avertissement */
+  --jaune-texte: #5c4500;
+  --vert: #2e7d32;              /* succès (code universel) */
+  --vert-15: #eaf3ea;
+
+  /* Surfaces */
+  --fond-app: #f8f7fb;
+  --blanc: #ffffff;
+  --bordure: #e6e2ee;
+
+  /* Formes et ombres */
+  --radius: 10px;
+  --radius-carte: 16px;
+  --radius-pilule: 999px;
+  --ombre-carte: 0 2px 12px rgba(100, 67, 145, 0.10);
+  --ombre-focus: 0 0 0 3px var(--violet-25);
+
+  /* Typographie */
+  --police: "Aptos", "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+/* --- 2. Base ----------------------------------------------------------------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px; /* base minimum, public vulnérable */
+}
+
+body {
+  margin: 0;
+  font-family: var(--police);
+  color: var(--gris-fonce);
+  background-color: var(--fond-app);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Focus clavier visible partout (accessibilité) */
+:focus-visible {
+  outline: 2px solid var(--violet);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* --- 3. En-tête -------------------------------------------------------------- */
+.app-header {
+  background: var(--blanc);
+  border-bottom: 3px solid var(--rouge); /* liseré signature Fedasil */
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+}
+
+.brand-logo {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--violet);
+  color: var(--blanc);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+}
+
+/* --- 4. Sélecteur de langue (pilules) ---------------------------------------- */
+.lang-switch {
+  display: flex;
+  gap: 6px;
+}
+
+.lang-switch button {
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 7px 14px;
+  min-height: 36px;
+  border-radius: var(--radius-pilule);
+  border: 1.5px solid var(--violet-25);
+  background: var(--blanc);
+  color: var(--gris);
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.lang-switch button:hover {
+  border-color: var(--violet-50);
+}
+
+.lang-switch button[aria-pressed="true"] {
+  background: var(--violet);
+  border-color: var(--violet);
+  color: var(--blanc);
+}
+
+/* --- 5. Mise en page ---------------------------------------------------------- */
+.page {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 32px 20px 56px;
+}
+
+.page-title {
+  margin: 0;
+  font-size: 1.75rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+/* Trait rouge de la charte, sous chaque titre de page */
+.title-accent {
+  width: 32px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--rouge);
+  margin: 8px 0;
+}
+
+.page-subtitle {
+  margin: 0 0 24px;
+  color: var(--gris);
+}
+
+.card {
+  background: var(--blanc);
+  border-radius: var(--radius-carte);
+  box-shadow: var(--ombre-carte);
+  padding: 28px;
+}
+
+@media (max-width: 480px) {
+  .card {
+    padding: 20px;
+  }
+}
+
+/* Deux colonnes sur écran large, une seule sur mobile */
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+@media (max-width: 480px) {
+  .grid-2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* --- 6. Champs de formulaire ---------------------------------------------------- */
+.form {
+  display: grid;
+  gap: 20px;
+}
+
+.field label {
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.field input {
+  font: inherit;
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 14px;
+  border: 1.5px solid var(--violet-25);
+  border-radius: var(--radius);
+  background: var(--blanc);
+  color: var(--gris-fonce);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.field input::placeholder {
+  color: var(--gris-clair);
+}
+
+.field input:hover {
+  border-color: var(--violet-50);
+}
+
+.field input:focus {
+  outline: none;
+  border-color: var(--violet);
+  box-shadow: var(--ombre-focus);
+}
+
+.field input:disabled {
+  background: var(--fond-app);
+  color: var(--gris);
+  cursor: not-allowed;
+}
+
+.field .helper {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--gris);
+  margin-top: 5px;
+}
+
+/* État d'erreur : bordure + texte rouges, mais jamais la couleur seule
+   (le message texte porte toujours l'information) */
+.field.has-error input {
+  border-color: var(--rouge);
+}
+
+.field.has-error input:focus {
+  box-shadow: 0 0 0 3px var(--rouge-15);
+}
+
+.field.has-error .helper {
+  color: var(--rouge-fonce);
+}
+
+/* --- 7. Boutons -------------------------------------------------------------------- */
+.btn {
+  font: inherit;
+  font-weight: 600;
+  min-height: 48px;
+  padding: 10px 28px;
+  border-radius: var(--radius-pilule);
+  border: 1.5px solid transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.btn-primary {
+  background: var(--violet);
+  color: var(--blanc);
+}
+
+.btn-primary:hover {
+  background: var(--violet-fonce);
+}
+
+.btn-outline {
+  background: var(--blanc);
+  border-color: var(--violet-50);
+  color: var(--violet);
+}
+
+.btn-outline:hover {
+  border-color: var(--violet);
+  background: var(--violet-8);
+}
+
+.btn:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.btn-block {
+  width: 100%;
+}
+
+/* Roue de chargement (remplace CircularProgress) */
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 2.5px solid rgba(255, 255, 255, 0.4);
+  border-top-color: var(--blanc);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* --- 8. Messages d'état (remplacent Alert) -------------------------------------- */
+.alert {
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+  font-size: 0.95rem;
+}
+
+.alert-success {
+  background: var(--vert-15);
+  color: #1e5423;
+}
+
+.alert-error {
+  background: var(--rouge-15);
+  color: var(--rouge-fonce);
+}
+
+.alert-info {
+  background: var(--bleu-clair-25);
+  color: var(--bleu-info-texte);
+}
+
+.alert-warning {
+  background: var(--jaune-25);
+  color: var(--jaune-texte);
+}
+
+/* --- 9. Divers ------------------------------------------------------------------------ */
+.section-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.section-hint {
+  font-size: 0.85rem;
+  color: var(--gris);
+  margin: 0 0 10px;
+}
