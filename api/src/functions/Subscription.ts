@@ -60,6 +60,20 @@ const INVITE_REDIRECT_URL = process.env["INVITE_REDIRECT_URL"];
 const NN_CHECKSUM_STRICT =
   (process.env["NN_CHECKSUM_STRICT"] ?? "false").toLowerCase() === "true";
 
+// ⚠️ DEBUG TEMPORAIRE — à retirer après diagnostic.
+// Si DEBUG_ERRORS=true (variable d'environnement), les réponses 500 incluent
+// le détail de l'erreur. NE JAMAIS laisser activé en usage réel.
+const DEBUG_ERRORS =
+  (process.env["DEBUG_ERRORS"] ?? "false").toLowerCase() === "true";
+
+function buildErrorBody(error: unknown): Record<string, unknown> {
+  if (!DEBUG_ERRORS) return { message: GENERIC_SERVER_ERROR };
+  return {
+    message: GENERIC_SERVER_ERROR,
+    debug: error instanceof Error ? error.message : String(error),
+  };
+}
+
 // ---------- Helpers de journalisation (RGPD) ----------
 // Le guide impose de ne jamais écrire le numéro national complet, ni les
 // payloads bruts, ni les réponses Graph contenant des données personnelles.
@@ -457,7 +471,7 @@ export async function CheckEmail(
     return { status: 200, jsonBody: { exists } };
   } catch (error) {
     context.log("Erreur dans /check-email:", error);
-    return { status: 500, jsonBody: { message: GENERIC_SERVER_ERROR } };
+   return { status: 500, jsonBody: buildErrorBody(error) };
   }
 }
 
