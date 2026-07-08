@@ -2,14 +2,16 @@
 // Portail.tsx — Espace sécurisé du résident (version sans MUI)
 // -----------------------------------------------------------------------------
 // Flux : /.auth/me → redirection connexion si besoin, puis /api/me.
-// L'API renvoie désormais TOUTES les déclarations du trimestre, triées de la
-// plus récente à la plus ancienne : { quarter, months: [...] }.
-// Présentation (validée avec maquette) :
-//   1. « Votre dernière déclaration » : le mois le plus récent en tuiles
-//   2. « Trimestre en cours » : les 3 mois listés (coche = déclaré),
-//      total du trimestre (net + cotisation)
-//   3. Bouton « Voir le trimestre précédent » → /api/me?quarter=previous
-//      (même présentation, sans la section « dernière déclaration »)
+// L'API renvoie toutes les déclarations du trimestre, triées de la plus
+// récente à la plus ancienne : { quarter, months: [...] }.
+// Présentation :
+//   1. Tuiles du mois AFFICHÉ (par défaut le plus récent ; cliquer un mois
+//      dans la carte trimestre change le mois affiché)
+//   2. Carte « Trimestre en cours » : lignes de mois CLIQUABLES (coche =
+//      déclaré), total du trimestre
+//   3. « Paiements du trimestre » : à payer / déjà payé / reste à payer
+//      (l'information principale pour le résident)
+//   4. Bouton vers le trimestre précédent (/api/me?quarter=previous)
 // =============================================================================
 
 import { useState, useEffect } from "react";
@@ -24,6 +26,7 @@ const labels = {
     activated: "Votre accès est activé.",
     intro: "Voici vos informations.",
     lastDeclaration: "Votre dernière déclaration",
+    displayedDeclaration: "Déclaration affichée",
     netSalary: "Salaire net",
     grossSalary: "Salaire brut",
     contribution: "Cotisation",
@@ -34,7 +37,12 @@ const labels = {
     quarterPrevious: "Trimestre précédent",
     declared: "Déclaration reçue",
     notYetDeclared: "pas encore de déclaration",
+    showMonth: "Afficher ce mois",
     quarterTotal: "Total du trimestre",
+    paymentsTitle: "Paiements du trimestre",
+    toPay: "À payer",
+    alreadyPaid: "Déjà payé",
+    remaining: "Reste à payer",
     seePrevious: "Voir le trimestre précédent",
     backToCurrent: "Revenir au trimestre en cours",
     noDeclarations: "Aucune déclaration pour ce trimestre pour le moment.",
@@ -50,6 +58,7 @@ const labels = {
     activated: "Uw toegang is geactiveerd.",
     intro: "Hier zijn uw gegevens.",
     lastDeclaration: "Uw laatste aangifte",
+    displayedDeclaration: "Weergegeven aangifte",
     netSalary: "Nettoloon",
     grossSalary: "Brutoloon",
     contribution: "Bijdrage",
@@ -60,7 +69,12 @@ const labels = {
     quarterPrevious: "Vorig kwartaal",
     declared: "Aangifte ontvangen",
     notYetDeclared: "nog geen aangifte",
+    showMonth: "Deze maand weergeven",
     quarterTotal: "Totaal van het kwartaal",
+    paymentsTitle: "Betalingen van het kwartaal",
+    toPay: "Te betalen",
+    alreadyPaid: "Al betaald",
+    remaining: "Nog te betalen",
     seePrevious: "Vorig kwartaal bekijken",
     backToCurrent: "Terug naar het huidige kwartaal",
     noDeclarations: "Nog geen aangiften voor dit kwartaal.",
@@ -76,6 +90,7 @@ const labels = {
     activated: "Your access is now active.",
     intro: "Here is your information.",
     lastDeclaration: "Your latest declaration",
+    displayedDeclaration: "Displayed declaration",
     netSalary: "Net salary",
     grossSalary: "Gross salary",
     contribution: "Contribution",
@@ -86,7 +101,12 @@ const labels = {
     quarterPrevious: "Previous quarter",
     declared: "Declaration received",
     notYetDeclared: "no declaration yet",
+    showMonth: "Show this month",
     quarterTotal: "Quarter total",
+    paymentsTitle: "Quarter payments",
+    toPay: "To pay",
+    alreadyPaid: "Already paid",
+    remaining: "Remaining",
     seePrevious: "View previous quarter",
     backToCurrent: "Back to current quarter",
     noDeclarations: "No declarations for this quarter yet.",
@@ -198,31 +218,38 @@ function CheckIcon({ size = 22 }: { size?: number }) {
   );
 }
 
-/** Tuile de donnée : libellé + valeur. */
+/** Tuile de donnée : libellé + valeur.
+ *  tone : "highlight" = valeur en violet, "ok" = valeur en vert. */
 function DataTile({
   label,
   value,
-  highlight = false,
+  tone,
 }: {
   label: string;
   value: string;
-  highlight?: boolean;
+  tone?: "highlight" | "ok";
 }) {
   return (
-    <div className={`data-tile${highlight ? " highlight" : ""}`}>
+    <div className={`data-tile${tone ? ` ${tone}` : ""}`}>
       <span className="label">{label}</span>
       <span className="value">{value || "—"}</span>
     </div>
   );
 }
 
-/** Carte trimestre : une ligne par mois (coche = déclaré) + total. */
+/** Carte trimestre : une ligne par mois + total.
+ *  Si onSelectMonth est fourni, les mois déclarés sont cliquables et le mois
+ *  sélectionné est mis en évidence. */
 function QuarterCard({
   data,
   lang,
+  selectedMonth,
+  onSelectMonth,
 }: {
   data: MeResponse;
   lang: Language;
+  selectedMonth?: number | null;
+  onSelectMonth?: (month: number) => void;
 }) {
   const t = labels[lang];
   const byMonth = new Map(data.months.map((m) => [m.month, m]));
@@ -243,8 +270,21 @@ function QuarterCard({
     <div className="quarter-card">
       {monthsToShow.map((month) => {
         const decl = byMonth.get(month);
-        return decl ? (
-          <div className="quarter-row" key={month}>
+
+        if (!decl) {
+          return (
+            <div className="quarter-row q-missing" key={month}>
+              <span className="q-month">{monthName(month, lang)}</span>
+              <span className="q-amounts">{t.notYetDeclared}</span>
+              <span className="q-check" aria-hidden="true">
+                —
+              </span>
+            </div>
+          );
+        }
+
+        const content = (
+          <>
             <span className="q-month">{monthName(month, lang)}</span>
             <span className="q-amounts">
               {t.netShort} {euro(decl.netSalary, lang)} · {t.contribShort}{" "}
@@ -253,14 +293,26 @@ function QuarterCard({
             <span className="q-check" role="img" aria-label={t.declared}>
               <CheckIcon size={18} />
             </span>
-          </div>
+          </>
+        );
+
+        // Mois cliquable : affiche ce mois dans les tuiles du haut.
+        return onSelectMonth ? (
+          <button
+            type="button"
+            key={month}
+            className={`quarter-row q-clickable${
+              selectedMonth === month ? " q-selected" : ""
+            }`}
+            aria-current={selectedMonth === month ? "true" : undefined}
+            aria-label={`${t.showMonth} : ${monthName(month, lang)}`}
+            onClick={() => onSelectMonth(month)}
+          >
+            {content}
+          </button>
         ) : (
-          <div className="quarter-row q-missing" key={month}>
-            <span className="q-month">{monthName(month, lang)}</span>
-            <span className="q-amounts">{t.notYetDeclared}</span>
-            <span className="q-check" aria-hidden="true">
-              —
-            </span>
+          <div className="quarter-row" key={month}>
+            {content}
           </div>
         );
       })}
@@ -284,6 +336,9 @@ export default function Portail() {
 
   const [status, setStatus] = useState<Status>("loading");
   const [current, setCurrent] = useState<MeResponse | null>(null);
+
+  // Mois affiché dans les tuiles (par défaut : le plus récent).
+  const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
 
   // Trimestre précédent : chargé à la demande, puis gardé en mémoire.
   const [view, setView] = useState<"current" | "previous">("current");
@@ -323,6 +378,7 @@ export default function Portail() {
 
         const json = (await res.json()) as MeResponse;
         setCurrent(json);
+        setSelectedMonth(json.months[0]?.month ?? null);
         setStatus("ready");
       } catch {
         if (!cancelled) setStatus("error");
@@ -354,7 +410,18 @@ export default function Portail() {
     }
   };
 
-  const latest = current?.months[0] ?? null;
+  // Déclaration affichée dans les tuiles (mois sélectionné, sinon la dernière).
+  const latestMonth = current?.months[0]?.month ?? null;
+  const displayed =
+    current?.months.find((m) => m.month === selectedMonth) ??
+    current?.months[0] ??
+    null;
+
+  // Récapitulatif des paiements du trimestre en cours.
+  const totalToPay =
+    current?.months.reduce((s, m) => s + (m.contribution ?? 0), 0) ?? 0;
+  const totalPaid = current?.months.reduce((s, m) => s + (m.paid ?? 0), 0) ?? 0;
+  const remaining = Math.max(0, totalToPay - totalPaid);
 
   const quarterTitle = (data: MeResponse | null, base: string): string => {
     if (!data || data.quarter === null) return base;
@@ -422,38 +489,67 @@ export default function Portail() {
                 </div>
               ) : (
                 <>
-                  <h2 className="portal-section-title">{t.lastDeclaration}</h2>
-                  {latest && (
+                  {/* 1. Tuiles du mois affiché */}
+                  <h2 className="portal-section-title">
+                    {displayed && displayed.month === latestMonth
+                      ? t.lastDeclaration
+                      : t.displayedDeclaration}
+                  </h2>
+                  {displayed && (
                     <>
                       <p className="month-caption">
-                        {monthName(latest.month, language)}
+                        {monthName(displayed.month, language)}
                       </p>
                       <div className="data-grid">
                         <DataTile
                           label={t.grossSalary}
-                          value={euro(latest.grossSalary, language)}
+                          value={euro(displayed.grossSalary, language)}
                         />
                         <DataTile
                           label={t.netSalary}
-                          value={euro(latest.netSalary, language)}
-                          highlight
+                          value={euro(displayed.netSalary, language)}
+                          tone="highlight"
                         />
                         <DataTile
                           label={t.contribution}
-                          value={euro(latest.contribution, language)}
+                          value={euro(displayed.contribution, language)}
                         />
                         <DataTile
                           label={t.paid}
-                          value={euro(latest.paid, language)}
+                          value={euro(displayed.paid, language)}
                         />
                       </div>
                     </>
                   )}
 
+                  {/* 2. Les mois du trimestre (cliquables) */}
                   <h2 className="portal-section-title">
                     {quarterTitle(current, t.quarterCurrent)}
                   </h2>
-                  <QuarterCard data={current} lang={language} />
+                  <QuarterCard
+                    data={current}
+                    lang={language}
+                    selectedMonth={selectedMonth}
+                    onSelectMonth={setSelectedMonth}
+                  />
+
+                  {/* 3. Récapitulatif des paiements (l'info clé du résident) */}
+                  <h2 className="portal-section-title">{t.paymentsTitle}</h2>
+                  <div className="recap-grid">
+                    <DataTile
+                      label={t.toPay}
+                      value={euro(totalToPay, language)}
+                    />
+                    <DataTile
+                      label={t.alreadyPaid}
+                      value={euro(totalPaid, language)}
+                    />
+                    <DataTile
+                      label={t.remaining}
+                      value={euro(remaining, language)}
+                      tone={remaining === 0 ? "ok" : "highlight"}
+                    />
+                  </div>
                 </>
               )}
 

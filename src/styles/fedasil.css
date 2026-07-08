@@ -484,9 +484,27 @@ a.btn {
   margin-top: 2px;
 }
 
-/* Variante mise en avant (ex. salaire net) */
+/* Variante mise en avant (ex. salaire net, reste à payer) */
 .data-tile.highlight .value {
   color: var(--violet);
+}
+
+/* Variante « tout est en ordre » (ex. reste à payer = 0) */
+.data-tile.ok .value {
+  color: var(--vert);
+}
+
+/* Récapitulatif des paiements : 3 tuiles, 1 colonne sur mobile */
+.recap-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 480px) {
+  .recap-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Pied de carte : action alignée à droite */
@@ -531,6 +549,34 @@ a.btn {
 
 .quarter-row:first-child {
   border-top: none;
+}
+
+/* Ligne de mois cliquable (bouton) : même apparence qu'une ligne normale */
+button.quarter-row {
+  width: 100%;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  border-left: none;
+  border-right: none;
+  border-bottom: none;
+  cursor: pointer;
+  min-height: 48px; /* zone tactile confortable */
+}
+
+button.quarter-row:hover {
+  background: var(--violet-8);
+}
+
+/* Mois actuellement affiché dans les tuiles */
+.quarter-row.q-selected {
+  background: var(--violet-8);
+  box-shadow: inset 3px 0 0 var(--violet);
+}
+
+.quarter-row.q-selected .q-month {
+  color: var(--violet);
 }
 
 .quarter-row .q-month {
