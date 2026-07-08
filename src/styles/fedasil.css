@@ -632,6 +632,106 @@ button.quarter-row:hover {
   margin-top: 20px;
 }
 
+/* --- 12. Portail : paiement de la cotisation (QR EPC + virement manuel) ------ */
+
+.payment-card {
+  border: 1.5px solid var(--violet-25);
+  border-radius: var(--radius);
+  padding: 16px;
+  background: var(--violet-8);
+}
+
+.payment-card .payment-for {
+  margin: 0 0 12px;
+}
+
+.payment-card .payment-for strong {
+  color: var(--violet);
+}
+
+/* Bloc QR : centré, sur fond blanc pour un scan fiable */
+.qr-block {
+  text-align: center;
+  margin-bottom: 14px;
+}
+
+.qr-block p {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  color: var(--gris);
+}
+
+.qr-block img {
+  background: var(--blanc);
+  border: 1.5px solid var(--bordure);
+  border-radius: var(--radius);
+  padding: 8px;
+}
+
+.payment-manual-intro {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  color: var(--gris);
+}
+
+/* Champs de virement : libellé, valeur, bouton copier */
+.payment-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pay-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  background: var(--blanc);
+  border: 1.5px solid var(--bordure);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+}
+
+.pay-field .pf-label {
+  font-size: 0.8rem;
+  color: var(--gris);
+  min-width: 150px;
+}
+
+.pay-field .pf-value {
+  font-weight: 600;
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+/* Bouton copier compact (reste >= 48px de zone tactile en hauteur) */
+.btn-copy {
+  padding: 10px 14px;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+/* La consigne « communication structurée uniquement » doit se voir */
+.payment-note {
+  margin: 14px 0 0;
+  font-weight: 600;
+  color: var(--rouge);
+  font-size: 0.9rem;
+}
+
+.payment-delay {
+  margin: 6px 0 0;
+  font-size: 0.85rem;
+  color: var(--gris);
+}
+
+@media (max-width: 480px) {
+  .pay-field .pf-label {
+    flex-basis: 100%;
+    min-width: 0;
+  }
+}
+
 @media (max-width: 420px) {
   .quarter-row {
     flex-wrap: wrap;

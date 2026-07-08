@@ -15,6 +15,7 @@
 // =============================================================================
 
 import { useState, useEffect } from "react";
+import QRCode from "qrcode";
 
 import { useLanguage } from "./i18n/useLanguage";
 import type { Language } from "./i18n/translations";
@@ -45,6 +46,20 @@ const labels = {
     remaining: "Reste à payer",
     seePrevious: "Voir le trimestre précédent",
     backToCurrent: "Revenir au trimestre en cours",
+    payTitle: "Payer ma cotisation",
+    payFor: "Paiement pour",
+    scanQr: "Scannez ce code avec votre application bancaire :",
+    orManual: "Ou faites un virement avec ces informations :",
+    beneficiaryLabel: "Bénéficiaire",
+    ibanLabel: "Compte (IBAN)",
+    amountLabel: "Montant",
+    communicationLabel: "Communication structurée",
+    commNote:
+      "Important : utilisez uniquement cette communication structurée, sans rien ajouter ni modifier.",
+    paidDelay:
+      "Après votre virement, le paiement peut prendre quelques jours pour apparaître ici.",
+    copy: "Copier",
+    copied: "Copié ✓",
     noDeclarations: "Aucune déclaration pour ce trimestre pour le moment.",
     loading: "Chargement de vos informations…",
     noData:
@@ -77,6 +92,20 @@ const labels = {
     remaining: "Nog te betalen",
     seePrevious: "Vorig kwartaal bekijken",
     backToCurrent: "Terug naar het huidige kwartaal",
+    payTitle: "Mijn bijdrage betalen",
+    payFor: "Betaling voor",
+    scanQr: "Scan deze code met uw bankapp:",
+    orManual: "Of doe een overschrijving met deze gegevens:",
+    beneficiaryLabel: "Begunstigde",
+    ibanLabel: "Rekening (IBAN)",
+    amountLabel: "Bedrag",
+    communicationLabel: "Gestructureerde mededeling",
+    commNote:
+      "Belangrijk: gebruik uitsluitend deze gestructureerde mededeling, zonder iets toe te voegen of te wijzigen.",
+    paidDelay:
+      "Na uw overschrijving kan het enkele dagen duren voordat de betaling hier verschijnt.",
+    copy: "Kopiëren",
+    copied: "Gekopieerd ✓",
     noDeclarations: "Nog geen aangiften voor dit kwartaal.",
     loading: "Uw gegevens worden geladen…",
     noData:
@@ -109,6 +138,20 @@ const labels = {
     remaining: "Remaining",
     seePrevious: "View previous quarter",
     backToCurrent: "Back to current quarter",
+    payTitle: "Pay my contribution",
+    payFor: "Payment for",
+    scanQr: "Scan this code with your banking app:",
+    orManual: "Or make a transfer with these details:",
+    beneficiaryLabel: "Beneficiary",
+    ibanLabel: "Account (IBAN)",
+    amountLabel: "Amount",
+    communicationLabel: "Structured communication",
+    commNote:
+      "Important: use only this structured communication, without adding or changing anything.",
+    paidDelay:
+      "After your transfer, the payment may take a few days to appear here.",
+    copy: "Copy",
+    copied: "Copied ✓",
     noDeclarations: "No declarations for this quarter yet.",
     loading: "Loading your information…",
     noData:
@@ -127,11 +170,18 @@ type MonthlyDeclaration = {
   grossSalary: number | null;
   contribution: number | null;
   paid: number | null;
+  structuredCom: string | null;
+};
+
+type PaymentConfig = {
+  iban: string;
+  beneficiary: string;
 };
 
 type MeResponse = {
   quarter: number | null;
   months: MonthlyDeclaration[]; // trié du plus récent au plus ancien
+  payment?: PaymentConfig | null;
 };
 
 type Status = "loading" | "ready" | "nodata" | "error";
@@ -165,6 +215,32 @@ function euro(value: number | null, lang: Language): string {
 /** Les 3 mois d'un trimestre (ex. 4 -> [10, 11, 12]). */
 function quarterMonths(quarter: number): number[] {
   return [quarter * 3 - 2, quarter * 3 - 1, quarter * 3];
+}
+
+/** Contenu d'un QR EPC (« SEPA Credit Transfer », norme EPC069-12).
+ *  Reconnu par les applications bancaires belges (ING, KBC, Belfius…).
+ *  La communication structurée belge (+++...+++) se place dans le champ
+ *  « remittance non structurée » (ligne 11) : les apps belges la
+ *  reconnaissent et la convertissent en communication structurée. */
+function epcQrPayload(
+  beneficiary: string,
+  iban: string,
+  amount: number,
+  remittance: string
+): string {
+  return [
+    "BCD", // service tag
+    "002", // version (BIC facultatif)
+    "1", // encodage UTF-8
+    "SCT", // SEPA Credit Transfer
+    "", // BIC (facultatif en version 002)
+    beneficiary.slice(0, 70),
+    iban.replace(/\s+/g, ""),
+    `EUR${amount.toFixed(2)}`,
+    "", // purpose
+    "", // référence structurée ISO 11649 (non utilisée en Belgique)
+    remittance, // communication belge +++.../.../..+++
+  ].join("\n");
 }
 
 // --- Petits composants de présentation ----------------------------------------
@@ -328,6 +404,107 @@ function QuarterCard({
   );
 }
 
+/** Carte de paiement : QR EPC + informations de virement copiables.
+ *  Affichée pour le mois impayé le plus ancien (règle d'imputation FIFO). */
+function PaymentCard({
+  month,
+  amount,
+  structuredCom,
+  payment,
+  lang,
+}: {
+  month: number;
+  amount: number;
+  structuredCom: string;
+  payment: PaymentConfig;
+  lang: Language;
+}) {
+  const t = labels[lang];
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  // Génère le QR localement (aucun service externe, compatible CSP).
+  useEffect(() => {
+    let cancelled = false;
+    QRCode.toDataURL(
+      epcQrPayload(payment.beneficiary, payment.iban, amount, structuredCom),
+      { width: 200, margin: 2, errorCorrectionLevel: "M" }
+    )
+      .then((url) => {
+        if (!cancelled) setQrDataUrl(url);
+      })
+      .catch(() => {
+        if (!cancelled) setQrDataUrl(null); // pas de QR -> champs manuels seuls
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [payment.beneficiary, payment.iban, amount, structuredCom]);
+
+  const copy = async (field: string, value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedField(field);
+      window.setTimeout(() => setCopiedField(null), 2000);
+    } catch {
+      // Presse-papiers indisponible : l'utilisateur peut sélectionner le texte.
+    }
+  };
+
+  const amountText = new Intl.NumberFormat(LOCALES[lang], {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount);
+
+  const fields: Array<{ key: string; label: string; value: string }> = [
+    { key: "benef", label: t.beneficiaryLabel, value: payment.beneficiary },
+    { key: "iban", label: t.ibanLabel, value: payment.iban },
+    { key: "amount", label: t.amountLabel, value: amountText },
+    { key: "com", label: t.communicationLabel, value: structuredCom },
+  ];
+
+  return (
+    <div className="payment-card">
+      <p className="payment-for">
+        {t.payFor} <strong>{monthName(month, lang)}</strong> ·{" "}
+        <strong>{euro(amount, lang)}</strong>
+      </p>
+
+      {qrDataUrl && (
+        <div className="qr-block">
+          <p>{t.scanQr}</p>
+          <img
+            src={qrDataUrl}
+            width={200}
+            height={200}
+            alt={`QR — ${t.payFor} ${monthName(month, lang)}`}
+          />
+        </div>
+      )}
+
+      <p className="payment-manual-intro">{t.orManual}</p>
+      <div className="payment-fields">
+        {fields.map((f) => (
+          <div className="pay-field" key={f.key}>
+            <span className="pf-label">{f.label}</span>
+            <span className="pf-value">{f.value}</span>
+            <button
+              type="button"
+              className="btn btn-outline btn-copy"
+              onClick={() => copy(f.key, f.value)}
+            >
+              {copiedField === f.key ? t.copied : t.copy}
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <p className="payment-note">{t.commNote}</p>
+      <p className="payment-delay">{t.paidDelay}</p>
+    </div>
+  );
+}
+
 // --- Composant principal --------------------------------------------------------
 
 export default function Portail() {
@@ -422,6 +599,21 @@ export default function Portail() {
     current?.months.reduce((s, m) => s + (m.contribution ?? 0), 0) ?? 0;
   const totalPaid = current?.months.reduce((s, m) => s + (m.paid ?? 0), 0) ?? 0;
   const remaining = Math.max(0, totalToPay - totalPaid);
+
+  // Mois à payer : le plus ANCIEN dont le solde est ouvert (imputation FIFO),
+  // à condition d'avoir sa communication structurée et la config de paiement.
+  const monthToPay = current
+    ? [...current.months]
+        .sort((a, b) => a.month - b.month)
+        .find(
+          (m) =>
+            (m.contribution ?? 0) - (m.paid ?? 0) > 0.005 &&
+            m.structuredCom !== null
+        ) ?? null
+    : null;
+  const amountToPay = monthToPay
+    ? (monthToPay.contribution ?? 0) - (monthToPay.paid ?? 0)
+    : 0;
 
   const quarterTitle = (data: MeResponse | null, base: string): string => {
     if (!data || data.quarter === null) return base;
@@ -550,6 +742,20 @@ export default function Portail() {
                       tone={remaining === 0 ? "ok" : "highlight"}
                     />
                   </div>
+
+                  {/* 4. Paiement : mois impayé le plus ancien (FIFO) */}
+                  {current.payment && monthToPay && monthToPay.structuredCom && (
+                    <>
+                      <h2 className="portal-section-title">{t.payTitle}</h2>
+                      <PaymentCard
+                        month={monthToPay.month}
+                        amount={amountToPay}
+                        structuredCom={monthToPay.structuredCom}
+                        payment={current.payment}
+                        lang={language}
+                      />
+                    </>
+                  )}
                 </>
               )}
 

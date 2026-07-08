@@ -22,9 +22,11 @@ import {
 //      quarter: 4 | 3 | null,      // n° du trimestre, déduit du nom de liste
 //      months: [                   // trié du mois le plus récent au plus ancien
 //        { month: 12, netSalary: 1540, grossSalary: 1540,
-//          contribution: 495, paid: null },
+//          contribution: 495, paid: null,
+//          structuredCom: "+++120/0655/21074+++" },
 //        ...
-//      ]
+//      ],
+//      payment: { iban, beneficiary } | null   // config de virement (env)
 //    }
 //    months peut être vide (aucune déclaration, ou liste du trimestre
 //    précédent inexistante) : c'est au frontend d'afficher l'état adapté.
@@ -66,6 +68,13 @@ const SP_NET_FIELD = process.env["SP_NET_FIELD"] ?? "NetSalary";
 const SP_GROSS_FIELD = process.env["SP_GROSS_FIELD"] ?? "GrossSalary";
 const SP_CONTRIB_FIELD = process.env["SP_CONTRIB_FIELD"] ?? "Contribution";
 const SP_PAID_FIELD = process.env["SP_PAID_FIELD"] ?? "Paid";
+const SP_STRUCTCOM_FIELD =
+  process.env["SP_STRUCTCOM_FIELD"] ?? "StructuredCom";
+
+// --- Paiement (affiché sur le portail ; si absent, la section paiement
+// n'apparaît tout simplement pas côté frontend) ---
+const PAYMENT_IBAN = process.env["PAYMENT_IBAN"] ?? "";
+const PAYMENT_BENEFICIARY = process.env["PAYMENT_BENEFICIARY"] ?? "";
 
 // FedasilNumber est-il une colonne de type Nombre dans SharePoint ?
 const SP_FA_IS_NUMBER =
@@ -89,6 +98,7 @@ type MonthlyDeclaration = {
   grossSalary: number | null;
   contribution: number | null;
   paid: number | null;
+  structuredCom: string | null; // communication structurée du virement (+++...+++)
 };
 
 type SpFields = Record<string, unknown>;
@@ -326,7 +336,14 @@ export async function Me(
       siteId,
       cumulListId,
       buildFilter(SP_CUMUL_FA_FIELD, fedasilNumber, SP_FA_IS_NUMBER),
-      [SP_MONTH_FIELD, SP_NET_FIELD, SP_GROSS_FIELD, SP_CONTRIB_FIELD, SP_PAID_FIELD],
+      [
+        SP_MONTH_FIELD,
+        SP_NET_FIELD,
+        SP_GROSS_FIELD,
+        SP_CONTRIB_FIELD,
+        SP_PAID_FIELD,
+        SP_STRUCTCOM_FIELD,
+      ],
       token,
       context
     );
@@ -337,17 +354,29 @@ export async function Me(
     for (const f of rows) {
       const month = toNumberOrNull(f[SP_MONTH_FIELD]);
       if (month === null) continue;
+      const rawCom = f[SP_STRUCTCOM_FIELD];
       byMonth.set(month, {
         month,
         netSalary: toNumberOrNull(f[SP_NET_FIELD]),
         grossSalary: toNumberOrNull(f[SP_GROSS_FIELD]),
         contribution: toNumberOrNull(f[SP_CONTRIB_FIELD]),
         paid: toNumberOrNull(f[SP_PAID_FIELD]),
+        structuredCom:
+          typeof rawCom === "string" && rawCom.trim() !== ""
+            ? rawCom.trim()
+            : null,
       });
     }
     const months = [...byMonth.values()].sort((a, b) => b.month - a.month);
 
-    return { status: 200, jsonBody: { quarter, months } };
+    // Configuration de paiement (IBAN institutionnel + bénéficiaire).
+    // Absente ou incomplète -> null : le portail masque la section paiement.
+    const payment =
+      PAYMENT_IBAN && PAYMENT_BENEFICIARY
+        ? { iban: PAYMENT_IBAN, beneficiary: PAYMENT_BENEFICIARY }
+        : null;
+
+    return { status: 200, jsonBody: { quarter, months, payment } };
   } catch (error) {
     context.log("Erreur dans /api/me:", error);
     return { status: 500, jsonBody: { message: GENERIC_SERVER_ERROR } };
