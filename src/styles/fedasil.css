@@ -390,6 +390,28 @@ body {
   font-weight: 600;
 }
 
+/* Avis post-déconnexion (ordinateur partagé) : étapes de déconnexion complète. */
+.logout-notice p {
+  margin: 0 0 8px;
+}
+
+.logout-notice .logout-done {
+  font-weight: 600;
+}
+
+.logout-notice ol {
+  margin: 0;
+  padding-left: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.logout-notice li > span {
+  display: block;
+  margin-bottom: 8px;
+}
+
 /* --- 10. Portail (page sécurisée) -------------------------------------------- */
 
 /* Un lien stylé en bouton (ex. déconnexion vers /.auth/logout) */

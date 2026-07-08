@@ -258,7 +258,7 @@ export default function Portail() {
           <div className="card-footer">
             <a
               className="btn btn-outline"
-              href="/.auth/logout?post_logout_redirect_uri=/"
+              href="/.auth/logout?post_logout_redirect_uri=%2F%3Floggedout%3D1"
             >
               {t.logout}
             </a>

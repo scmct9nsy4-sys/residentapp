@@ -47,6 +47,42 @@ const portalAccessLabels = {
   },
 } as const;
 
+// Avis affiché après une déconnexion du portail (arrivée sur /?loggedout=1).
+// Cas d'usage important : ordinateurs partagés dans les centres d'accueil.
+// La déconnexion du portail ne ferme PAS la session Microsoft du navigateur ;
+// on guide donc la personne vers une déconnexion complète.
+const loggedOutLabels = {
+  fr: {
+    done: "Vous êtes déconnecté(e) de votre espace ResidentApp.",
+    shared:
+      "Vous utilisez un ordinateur partagé ? Pour protéger vos informations, suivez aussi ces deux étapes :",
+    step1: "Déconnectez-vous de votre compte Microsoft :",
+    msLogout: "Se déconnecter de Microsoft",
+    step2: "Puis fermez toutes les fenêtres du navigateur.",
+  },
+  nl: {
+    done: "U bent afgemeld van uw ResidentApp-portaal.",
+    shared:
+      "Gebruikt u een gedeelde computer? Volg dan ook deze twee stappen om uw gegevens te beschermen:",
+    step1: "Meld u af van uw Microsoft-account:",
+    msLogout: "Afmelden bij Microsoft",
+    step2: "Sluit daarna alle browservensters.",
+  },
+  en: {
+    done: "You have been signed out of your ResidentApp portal.",
+    shared:
+      "Using a shared computer? To protect your information, also follow these two steps:",
+    step1: "Sign out of your Microsoft account:",
+    msLogout: "Sign out of Microsoft",
+    step2: "Then close all browser windows.",
+  },
+} as const;
+
+// Point de terminaison officiel de déconnexion Microsoft (ferme la session
+// Entra du navigateur, pour tous les comptes Microsoft ouverts).
+const MS_LOGOUT_URL =
+  "https://login.microsoftonline.com/common/oauth2/v2.0/logout";
+
 // --- Petits composants réutilisables -----------------------------------------
 
 /** Sélecteur de langue en pilules (utilisé pour l'interface ET la langue de contact). */
@@ -114,6 +150,12 @@ function Field({
 
 export default function App() {
   const { language, setLanguage, t } = useLanguage();
+
+  // true si on arrive ici juste après une déconnexion du portail (/?loggedout=1).
+  // Lu une seule fois au montage ; l'avis disparaît à la prochaine navigation.
+  const [showLoggedOut] = useState(
+    () => new URLSearchParams(window.location.search).get("loggedout") === "1"
+  );
 
   const [formData, setFormData] = useState<FormData>({
     nationalId: "",
@@ -297,6 +339,24 @@ export default function App() {
         <h1 className="page-title">{t("title")}</h1>
         <div className="title-accent" aria-hidden="true" />
         <p className="page-subtitle">{t("subtitle")}</p>
+
+        {/* Avis post-déconnexion : démarches pour une déconnexion COMPLÈTE
+            (cas des ordinateurs partagés dans les centres). */}
+        {showLoggedOut && (
+          <div className="alert alert-warning logout-notice" role="status">
+            <p className="logout-done">{loggedOutLabels[language].done}</p>
+            <p>{loggedOutLabels[language].shared}</p>
+            <ol>
+              <li>
+                <span>{loggedOutLabels[language].step1}</span>
+                <a className="btn btn-outline" href={MS_LOGOUT_URL}>
+                  {loggedOutLabels[language].msLogout}
+                </a>
+              </li>
+              <li>{loggedOutLabels[language].step2}</li>
+            </ol>
+          </div>
+        )}
 
         {/* Accès rapide au portail pour les résidents déjà inscrits.
             /portail redirige automatiquement vers la connexion Microsoft
