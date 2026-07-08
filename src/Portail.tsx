@@ -30,10 +30,10 @@ const labels = {
     displayedDeclaration: "Déclaration affichée",
     netSalary: "Salaire net",
     grossSalary: "Salaire brut",
-    contribution: "Cotisation",
+    contribution: "Contribution",
     paid: "Payé",
     netShort: "net",
-    contribShort: "cotisation",
+    contribShort: "contribution",
     quarterCurrent: "Trimestre en cours",
     quarterPrevious: "Trimestre précédent",
     declared: "Déclaration reçue",
@@ -46,7 +46,7 @@ const labels = {
     remaining: "Reste à payer",
     seePrevious: "Voir le trimestre précédent",
     backToCurrent: "Revenir au trimestre en cours",
-    payTitle: "Payer ma cotisation",
+    payTitle: "Payer ma contribution",
     payFor: "Paiement pour",
     scanQr: "Scannez ce code avec votre application bancaire :",
     orManual: "Ou faites un virement avec ces informations :",
@@ -58,9 +58,33 @@ const labels = {
       "Important : utilisez uniquement cette communication structurée, sans rien ajouter ni modifier.",
     paidDelay:
       "Après votre virement, le paiement peut prendre quelques jours pour apparaître ici.",
-    monthPaid: "La cotisation de {month} est payée.",
-    olderDue: "Attention : la cotisation de {month} n'est pas encore payée.",
+    monthPaid: "La contribution de {month} est payée.",
+    olderDue: "Attention : la contribution de {month} n'est pas encore payée.",
     seeMonth: "Voir",
+    declareTitle: "Déclarer mes revenus",
+    declareIntro: "Indiquez les montants de votre fiche de paie pour {month}.",
+    grossInput: "Salaire brut (€)",
+    netInput: "Salaire net (€)",
+    contributionCalc: "Contribution calculée",
+    declareCheck:
+      "La contribution est calculée automatiquement. Vérifiez vos montants avant d'envoyer.",
+    declareSubmit: "Envoyer ma déclaration",
+    declareSending: "Envoi en cours…",
+    declareInvalid: "Vérifiez les montants saisis.",
+    declareError:
+      "L'envoi n'a pas fonctionné. Veuillez réessayer plus tard.",
+    declareMonthAria: "Déclarer ce mois",
+    correctIntro:
+      "Corrigez les montants pour {month}. Les nouveaux montants remplacent les anciens.",
+    correctBtn: "Corriger ma déclaration",
+    cancelBtn: "Annuler",
+    payslip: "Fiche de paie {n}",
+    addPayslip: "+ Ajouter une fiche de paie",
+    removePayslip: "Supprimer la fiche de paie {n}",
+    multiHint:
+      "Plusieurs contrats ce mois-ci ? Ajoutez une fiche de paie par contrat : les montants s'additionnent.",
+    totalGross: "Total brut",
+    totalNet: "Total net",
     copy: "Copier",
     copied: "Copié ✓",
     noDeclarations: "Aucune déclaration pour ce trimestre pour le moment.",
@@ -110,6 +134,29 @@ const labels = {
     monthPaid: "De bijdrage van {month} is betaald.",
     olderDue: "Opgelet: de bijdrage van {month} is nog niet betaald.",
     seeMonth: "Bekijk",
+    declareTitle: "Mijn inkomsten aangeven",
+    declareIntro: "Vul de bedragen van uw loonfiche voor {month} in.",
+    grossInput: "Brutoloon (€)",
+    netInput: "Nettoloon (€)",
+    contributionCalc: "Berekende bijdrage",
+    declareCheck:
+      "De bijdrage wordt automatisch berekend. Controleer uw bedragen vóór het verzenden.",
+    declareSubmit: "Mijn aangifte verzenden",
+    declareSending: "Bezig met verzenden…",
+    declareInvalid: "Controleer de ingevoerde bedragen.",
+    declareError: "Het verzenden is niet gelukt. Probeer het later opnieuw.",
+    declareMonthAria: "Deze maand aangeven",
+    correctIntro:
+      "Corrigeer de bedragen voor {month}. De nieuwe bedragen vervangen de oude.",
+    correctBtn: "Mijn aangifte corrigeren",
+    cancelBtn: "Annuleren",
+    payslip: "Loonfiche {n}",
+    addPayslip: "+ Loonfiche toevoegen",
+    removePayslip: "Loonfiche {n} verwijderen",
+    multiHint:
+      "Meerdere contracten deze maand? Voeg per contract een loonfiche toe: de bedragen worden opgeteld.",
+    totalGross: "Totaal bruto",
+    totalNet: "Totaal netto",
     copy: "Kopiëren",
     copied: "Gekopieerd ✓",
     noDeclarations: "Nog geen aangiften voor dit kwartaal.",
@@ -159,6 +206,29 @@ const labels = {
     monthPaid: "The contribution for {month} is paid.",
     olderDue: "Note: the contribution for {month} has not been paid yet.",
     seeMonth: "View",
+    declareTitle: "Declare my income",
+    declareIntro: "Enter the amounts from your payslip for {month}.",
+    grossInput: "Gross salary (€)",
+    netInput: "Net salary (€)",
+    contributionCalc: "Calculated contribution",
+    declareCheck:
+      "The contribution is calculated automatically. Check your amounts before sending.",
+    declareSubmit: "Send my declaration",
+    declareSending: "Sending…",
+    declareInvalid: "Check the amounts you entered.",
+    declareError: "Sending failed. Please try again later.",
+    declareMonthAria: "Declare this month",
+    correctIntro:
+      "Correct the amounts for {month}. The new amounts replace the old ones.",
+    correctBtn: "Correct my declaration",
+    cancelBtn: "Cancel",
+    payslip: "Payslip {n}",
+    addPayslip: "+ Add a payslip",
+    removePayslip: "Remove payslip {n}",
+    multiHint:
+      "Several contracts this month? Add one payslip per contract: the amounts are added together.",
+    totalGross: "Total gross",
+    totalNet: "Total net",
     copy: "Copy",
     copied: "Copied ✓",
     noDeclarations: "No declarations for this quarter yet.",
@@ -224,6 +294,27 @@ function euro(value: number | null, lang: Language): string {
 /** Les 3 mois d'un trimestre (ex. 4 -> [10, 11, 12]). */
 function quarterMonths(quarter: number): number[] {
   return [quarter * 3 - 2, quarter * 3 - 1, quarter * 3];
+}
+
+/** Contribution selon les tranches Fedasil, appliquées au salaire NET :
+ *  0–264,99 : 0 % · 265–999,99 : 35 % · 1000–1499,99 : 45 % · 1500+ : 50 %.
+ *  ⚠ Aperçu en direct uniquement : le montant qui fait foi est TOUJOURS
+ *  recalculé côté serveur (Declare.ts) — garder les deux synchronisées. */
+function calcContribution(net: number): number {
+  const t2 = Math.max(0, Math.min(net, 1000) - 265) * 0.35;
+  const t3 = Math.max(0, Math.min(net, 1500) - 1000) * 0.45;
+  const t4 = Math.max(0, net - 1500) * 0.5;
+  return Math.round((t2 + t3 + t4) * 100) / 100;
+}
+
+/** Montant saisi (virgule ou point) -> nombre, ou null si invalide. */
+function parseAmount(raw: string): number | null {
+  const cleaned = raw.trim().replace(/\s+/g, "").replace(",", ".");
+  if (cleaned === "") return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) && n >= 0 && n <= 100000
+    ? Math.round(n * 100) / 100
+    : null;
 }
 
 /** Contenu d'un QR EPC (« SEPA Credit Transfer », norme EPC069-12).
@@ -357,13 +448,32 @@ function QuarterCard({
         const decl = byMonth.get(month);
 
         if (!decl) {
-          return (
-            <div className="quarter-row q-missing" key={month}>
+          const missingContent = (
+            <>
               <span className="q-month">{monthName(month, lang)}</span>
               <span className="q-amounts">{t.notYetDeclared}</span>
-              <span className="q-check" aria-hidden="true">
-                —
+              <span className="q-check q-plus" aria-hidden="true">
+                +
               </span>
+            </>
+          );
+          // Mois non déclaré : cliquable -> ouvre le formulaire de déclaration.
+          return onSelectMonth ? (
+            <button
+              type="button"
+              key={month}
+              className={`quarter-row q-clickable q-missing${
+                selectedMonth === month ? " q-selected" : ""
+              }`}
+              aria-current={selectedMonth === month ? "true" : undefined}
+              aria-label={`${t.declareMonthAria} : ${monthName(month, lang)}`}
+              onClick={() => onSelectMonth(month)}
+            >
+              {missingContent}
+            </button>
+          ) : (
+            <div className="quarter-row q-missing" key={month}>
+              {missingContent}
             </div>
           );
         }
@@ -514,6 +624,203 @@ function PaymentCard({
   );
 }
 
+/** Formulaire de déclaration d'un mois.
+ *  - Par défaut une seule fiche de paie (brut + net) ; « + Ajouter une fiche »
+ *    pour les résidents avec plusieurs contrats : les montants s'ADDITIONNENT
+ *    et la contribution est calculée sur le NET TOTAL (tranches progressives).
+ *  - Mode correction : pré-rempli avec les totaux actuels ; l'envoi remplace
+ *    la déclaration existante (l'API met à jour la ligne du mois).
+ *  L'aperçu de contribution est indicatif : le montant qui fait foi est
+ *  recalculé côté serveur (Declare.ts). */
+type PayslipLine = { gross: string; net: string };
+const MAX_PAYSLIPS = 10;
+
+function DeclarationForm({
+  month,
+  lang,
+  onSubmitted,
+  initial,
+  onCancel,
+}: {
+  month: number;
+  lang: Language;
+  onSubmitted: () => void;
+  initial?: { gross: number | null; net: number | null };
+  onCancel?: () => void;
+}) {
+  const t = labels[lang];
+  const toInput = (v: number | null | undefined): string =>
+    v === null || v === undefined ? "" : String(v).replace(".", ",");
+
+  const [lines, setLines] = useState<PayslipLine[]>([
+    { gross: toInput(initial?.gross), net: toInput(initial?.net) },
+  ]);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const parsed = lines.map((l) => ({
+    gross: parseAmount(l.gross),
+    net: parseAmount(l.net),
+  }));
+  const allValid = parsed.every((p) => p.gross !== null && p.net !== null);
+  const totalGross = parsed.reduce((s, p) => s + (p.gross ?? 0), 0);
+  const totalNet = parsed.reduce((s, p) => s + (p.net ?? 0), 0);
+  const contributionPreview = allValid ? calcContribution(totalNet) : null;
+  const canSubmit = allValid && !sending;
+
+  const setLine = (i: number, patch: Partial<PayslipLine>) =>
+    setLines((prev) =>
+      prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l))
+    );
+  const addLine = () =>
+    setLines((prev) =>
+      prev.length < MAX_PAYSLIPS ? [...prev, { gross: "", net: "" }] : prev
+    );
+  const removeLine = (i: number) =>
+    setLines((prev) => prev.filter((_, idx) => idx !== i));
+
+  const submit = async () => {
+    if (!canSubmit) return;
+    setSending(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/declare", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          month,
+          grossSalary: Math.round(totalGross * 100) / 100,
+          netSalary: Math.round(totalNet * 100) / 100,
+        }),
+      });
+      if (res.status === 400) {
+        setError(t.declareInvalid);
+      } else if (!res.ok) {
+        setError(t.declareError);
+      } else {
+        onSubmitted(); // recharge les données -> le mois apparaît déclaré
+        return;
+      }
+    } catch {
+      setError(t.declareError);
+    }
+    setSending(false);
+  };
+
+  return (
+    <div className="declare-card">
+      <p className="declare-intro">
+        {(initial ? t.correctIntro : t.declareIntro).replace(
+          "{month}",
+          monthName(month, lang)
+        )}
+      </p>
+
+      {lines.map((line, i) => (
+        <fieldset className="payslip" key={i}>
+          {lines.length > 1 && (
+            <div className="payslip-head">
+              <legend>{t.payslip.replace("{n}", String(i + 1))}</legend>
+              <button
+                type="button"
+                className="btn btn-outline btn-copy"
+                aria-label={t.removePayslip.replace("{n}", String(i + 1))}
+                onClick={() => removeLine(i)}
+              >
+                ✕
+              </button>
+            </div>
+          )}
+          <div className="form declare-form">
+            <div className="field">
+              <label htmlFor={`gross-${month}-${i}`}>{t.grossInput}</label>
+              <input
+                id={`gross-${month}-${i}`}
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
+                value={line.gross}
+                onChange={(e) => setLine(i, { gross: e.target.value })}
+                placeholder="0,00"
+              />
+            </div>
+            <div className="field">
+              <label htmlFor={`net-${month}-${i}`}>{t.netInput}</label>
+              <input
+                id={`net-${month}-${i}`}
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
+                value={line.net}
+                onChange={(e) => setLine(i, { net: e.target.value })}
+                placeholder="0,00"
+              />
+            </div>
+          </div>
+        </fieldset>
+      ))}
+
+      {lines.length < MAX_PAYSLIPS && (
+        <div className="declare-add">
+          <button type="button" className="btn btn-outline" onClick={addLine}>
+            {t.addPayslip}
+          </button>
+          <p className="declare-hint">{t.multiHint}</p>
+        </div>
+      )}
+
+      {/* Totaux (utiles dès qu'il y a plusieurs fiches) + contribution */}
+      {lines.length > 1 && (
+        <div className="declare-totals">
+          <span>
+            {t.totalGross} <strong>{euro(totalGross, lang)}</strong>
+          </span>
+          <span>
+            {t.totalNet} <strong>{euro(totalNet, lang)}</strong>
+          </span>
+        </div>
+      )}
+      <div className="declare-preview" role="status" aria-live="polite">
+        <span>{t.contributionCalc}</span>
+        <strong>
+          {contributionPreview !== null
+            ? euro(contributionPreview, lang)
+            : "—"}
+        </strong>
+      </div>
+
+      <p className="declare-check">{t.declareCheck}</p>
+
+      {error && (
+        <div className="alert alert-error" role="alert">
+          {error}
+        </div>
+      )}
+
+      <div className="declare-actions">
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={!canSubmit}
+          onClick={submit}
+        >
+          {sending ? t.declareSending : t.declareSubmit}
+        </button>
+        {onCancel && (
+          <button
+            type="button"
+            className="btn btn-outline"
+            onClick={onCancel}
+            disabled={sending}
+          >
+            {t.cancelBtn}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // --- Composant principal --------------------------------------------------------
 
 export default function Portail() {
@@ -526,15 +833,46 @@ export default function Portail() {
   // Mois affiché dans les tuiles (par défaut : le plus récent).
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
 
+  // Mois déclaré en cours de CORRECTION (formulaire pré-rempli).
+  const [editingMonth, setEditingMonth] = useState<number | null>(null);
+
+  // Sélectionner un mois quitte toujours le mode correction.
+  const selectMonth = (month: number) => {
+    setSelectedMonth(month);
+    setEditingMonth(null);
+  };
+
   // Trimestre précédent : chargé à la demande, puis gardé en mémoire.
   const [view, setView] = useState<"current" | "previous">("current");
   const [prevStatus, setPrevStatus] = useState<PrevStatus>("idle");
   const [previous, setPrevious] = useState<MeResponse | null>(null);
 
+  // Charge (ou recharge) les données du trimestre en cours.
+  const loadCurrent = async () => {
+    try {
+      const res = await fetch("/api/me");
+      if (res.status === 404) {
+        setStatus("nodata");
+        return;
+      }
+      if (!res.ok) {
+        setStatus("error");
+        return;
+      }
+      const json = (await res.json()) as MeResponse;
+      setCurrent(json);
+      setSelectedMonth(json.months[0]?.month ?? null);
+      setEditingMonth(null);
+      setStatus("ready");
+    } catch {
+      setStatus("error");
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
 
-    async function load() {
+    async function init() {
       try {
         // 1) Qui est connecté ? (fourni par Azure Static Web Apps)
         const authRes = await fetch("/.auth/me");
@@ -550,28 +888,13 @@ export default function Portail() {
         }
 
         // 2) Récupérer SES données (filtrage fait côté serveur)
-        const res = await fetch("/api/me");
-        if (cancelled) return;
-
-        if (res.status === 404) {
-          setStatus("nodata");
-          return;
-        }
-        if (!res.ok) {
-          setStatus("error");
-          return;
-        }
-
-        const json = (await res.json()) as MeResponse;
-        setCurrent(json);
-        setSelectedMonth(json.months[0]?.month ?? null);
-        setStatus("ready");
+        if (!cancelled) await loadCurrent();
       } catch {
         if (!cancelled) setStatus("error");
       }
     }
 
-    load();
+    init();
     return () => {
       cancelled = true;
     };
@@ -602,6 +925,12 @@ export default function Portail() {
     current?.months.find((m) => m.month === selectedMonth) ??
     current?.months[0] ??
     null;
+
+  // Le mois sélectionné n'est pas encore déclaré -> formulaire de déclaration.
+  const isMissingSelected =
+    selectedMonth !== null &&
+    current !== null &&
+    !current.months.some((m) => m.month === selectedMonth);
 
   // Récapitulatif des paiements du trimestre en cours.
   const totalToPay =
@@ -688,36 +1017,85 @@ export default function Portail() {
                 </div>
               ) : (
                 <>
-                  {/* 1. Tuiles du mois affiché */}
-                  <h2 className="portal-section-title">
-                    {displayed && displayed.month === latestMonth
-                      ? t.lastDeclaration
-                      : t.displayedDeclaration}
-                  </h2>
-                  {displayed && (
+                  {/* 1. Mois non déclaré sélectionné OU correction en cours
+                        -> formulaire ; sinon tuiles du mois affiché */}
+                  {isMissingSelected && selectedMonth !== null ? (
                     <>
+                      <h2 className="portal-section-title">
+                        {t.declareTitle}
+                      </h2>
+                      <p className="month-caption">
+                        {monthName(selectedMonth, language)}
+                      </p>
+                      <DeclarationForm
+                        key={selectedMonth}
+                        month={selectedMonth}
+                        lang={language}
+                        onSubmitted={loadCurrent}
+                      />
+                    </>
+                  ) : displayed && editingMonth === displayed.month ? (
+                    <>
+                      <h2 className="portal-section-title">{t.correctBtn}</h2>
                       <p className="month-caption">
                         {monthName(displayed.month, language)}
                       </p>
-                      <div className="data-grid">
-                        <DataTile
-                          label={t.grossSalary}
-                          value={euro(displayed.grossSalary, language)}
-                        />
-                        <DataTile
-                          label={t.netSalary}
-                          value={euro(displayed.netSalary, language)}
-                          tone="highlight"
-                        />
-                        <DataTile
-                          label={t.contribution}
-                          value={euro(displayed.contribution, language)}
-                        />
-                        <DataTile
-                          label={t.paid}
-                          value={euro(displayed.paid, language)}
-                        />
-                      </div>
+                      <DeclarationForm
+                        key={`edit-${displayed.month}`}
+                        month={displayed.month}
+                        lang={language}
+                        onSubmitted={loadCurrent}
+                        initial={{
+                          gross: displayed.grossSalary,
+                          net: displayed.netSalary,
+                        }}
+                        onCancel={() => setEditingMonth(null)}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <h2 className="portal-section-title">
+                        {displayed && displayed.month === latestMonth
+                          ? t.lastDeclaration
+                          : t.displayedDeclaration}
+                      </h2>
+                      {displayed && (
+                        <>
+                          <p className="month-caption">
+                            {monthName(displayed.month, language)}
+                          </p>
+                          <div className="data-grid">
+                            <DataTile
+                              label={t.grossSalary}
+                              value={euro(displayed.grossSalary, language)}
+                            />
+                            <DataTile
+                              label={t.netSalary}
+                              value={euro(displayed.netSalary, language)}
+                              tone="highlight"
+                            />
+                            <DataTile
+                              label={t.contribution}
+                              value={euro(displayed.contribution, language)}
+                            />
+                            <DataTile
+                              label={t.paid}
+                              value={euro(displayed.paid, language)}
+                            />
+                          </div>
+                          <div className="declare-correct">
+                            <button
+                              type="button"
+                              className="btn btn-outline"
+                              onClick={() =>
+                                setEditingMonth(displayed.month)
+                              }
+                            >
+                              {t.correctBtn}
+                            </button>
+                          </div>
+                        </>
+                      )}
                     </>
                   )}
 
@@ -729,7 +1107,7 @@ export default function Portail() {
                     data={current}
                     lang={language}
                     selectedMonth={selectedMonth}
-                    onSelectMonth={setSelectedMonth}
+                    onSelectMonth={selectMonth}
                   />
 
                   {/* 3. Récapitulatif des paiements (l'info clé du résident) */}
@@ -750,8 +1128,12 @@ export default function Portail() {
                     />
                   </div>
 
-                  {/* 4. Paiement : suit le mois sélectionné dans la carte */}
-                  {current.payment && displayed && (
+                  {/* 4. Paiement : suit le mois sélectionné dans la carte
+                        (masqué pendant une déclaration ou une correction) */}
+                  {!isMissingSelected &&
+                    editingMonth === null &&
+                    current.payment &&
+                    displayed && (
                     <>
                       <h2 className="portal-section-title">{t.payTitle}</h2>
 
@@ -796,7 +1178,7 @@ export default function Portail() {
                               type="button"
                               className="btn btn-outline"
                               onClick={() =>
-                                setSelectedMonth(oldestUnpaid.month)
+                                selectMonth(oldestUnpaid.month)
                               }
                             >
                               {t.seeMonth}{" "}

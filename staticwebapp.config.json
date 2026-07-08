@@ -1,13 +1,31 @@
 {
   "routes": [
-    { "route": "/api/me", "allowedRoles": ["authenticated"] }
+    {
+      "route": "/api/me",
+      "allowedRoles": [
+        "authenticated"
+      ]
+    },
+    {
+      "route": "/api/declare",
+      "allowedRoles": [
+        "authenticated"
+      ]
+    }
   ],
   "navigationFallback": {
     "rewrite": "/index.html",
-    "exclude": ["/api/*", "/assets/*", "/*.{css,js,svg,png,ico,json,webmanifest}"]
+    "exclude": [
+      "/api/*",
+      "/assets/*",
+      "/*.{css,js,svg,png,ico,json,webmanifest}"
+    ]
   },
   "responseOverrides": {
-    "404": { "rewrite": "/index.html", "statusCode": 200 }
+    "404": {
+      "rewrite": "/index.html",
+      "statusCode": 200
+    }
   },
   "globalHeaders": {
     "X-Content-Type-Options": "nosniff",

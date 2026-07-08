@@ -743,6 +743,142 @@ button.quarter-row:hover {
   flex-wrap: wrap;
 }
 
+/* --- 13. Portail : déclaration des revenus par le résident ------------------- */
+
+/* « + » violet sur les mois non déclarés cliquables */
+.quarter-row .q-plus {
+  color: var(--violet);
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+.quarter-row.q-missing.q-clickable .q-month {
+  color: var(--gris-fonce);
+  font-weight: 600;
+}
+
+.declare-card {
+  border: 1.5px solid var(--violet-25);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.declare-card .declare-intro {
+  margin: 0 0 14px;
+  color: var(--gris);
+  font-size: 0.95rem;
+}
+
+/* Deux champs côte à côte, empilés sur mobile */
+.declare-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 480px) {
+  .declare-form {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Aperçu de la contribution calculée en direct */
+.declare-preview {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--violet-8);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-top: 14px;
+}
+
+.declare-preview span {
+  font-size: 0.9rem;
+  color: var(--gris);
+}
+
+.declare-preview strong {
+  font-size: 1.15rem;
+  color: var(--violet);
+}
+
+.declare-card .declare-check {
+  margin: 12px 0 14px;
+  font-size: 0.85rem;
+  color: var(--gris);
+}
+
+.declare-card .alert {
+  margin-bottom: 14px;
+}
+
+/* Fiche de paie (fieldset neutre ; en-tête visible dès la 2e fiche) */
+.payslip {
+  border: none;
+  margin: 0 0 4px;
+  padding: 0;
+}
+
+.payslip + .payslip {
+  border-top: 1px dashed var(--bordure);
+  padding-top: 12px;
+  margin-top: 8px;
+}
+
+.payslip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.payslip-head legend {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--violet);
+  padding: 0;
+}
+
+/* Bouton « + Ajouter une fiche de paie » et son explication */
+.declare-add {
+  margin-top: 12px;
+}
+
+.declare-hint {
+  margin: 8px 0 0;
+  font-size: 0.85rem;
+  color: var(--gris);
+}
+
+/* Totaux brut/net quand plusieurs fiches */
+.declare-totals {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+  font-size: 0.95rem;
+}
+
+.declare-totals strong {
+  color: var(--gris-fonce);
+}
+
+/* Actions du formulaire (envoyer / annuler) */
+.declare-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* Bouton « Corriger ma déclaration » sous les tuiles */
+.declare-correct {
+  margin-top: 14px;
+}
+
 @media (max-width: 420px) {
   .quarter-row {
     flex-wrap: wrap;
