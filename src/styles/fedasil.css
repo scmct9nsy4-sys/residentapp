@@ -531,18 +531,20 @@ a.btn {
   margin: 0 0 12px;
 }
 
-/* Carte du trimestre : une ligne par mois + total */
+/* Carte du trimestre : une ligne par mois + total.
+   Le padding horizontal est porté par les LIGNES (pas par la carte) pour que
+   le fond et la barre de sélection ne collent pas au texte. */
 .quarter-card {
   border: 1.5px solid var(--bordure);
   border-radius: var(--radius);
-  padding: 2px 14px 12px;
+  padding: 2px 2px 12px;
 }
 
 .quarter-row {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 11px 0;
+  padding: 11px 12px;
   border-top: 1px solid var(--bordure);
   font-size: 0.95rem;
 }
@@ -614,7 +616,7 @@ button.quarter-row:hover {
   flex-wrap: wrap;
   gap: 8px;
   border-top: 2px solid var(--violet-25);
-  padding-top: 12px;
+  padding: 12px 12px 0;
   margin-top: 2px;
   font-size: 0.95rem;
 }
@@ -701,7 +703,9 @@ button.quarter-row:hover {
 .pay-field .pf-value {
   font-weight: 600;
   flex: 1;
-  overflow-wrap: anywhere;
+  min-width: 0;
+  white-space: nowrap; /* IBAN et communication toujours sur UNE ligne */
+  font-variant-numeric: tabular-nums;
 }
 
 /* Bouton copier compact (reste >= 48px de zone tactile en hauteur) */
@@ -729,6 +733,10 @@ button.quarter-row:hover {
   .pay-field .pf-label {
     flex-basis: 100%;
     min-width: 0;
+  }
+  /* 20 caractères (IBAN, communication) doivent tenir sur une ligne */
+  .pay-field .pf-value {
+    font-size: 0.95rem;
   }
 }
 
