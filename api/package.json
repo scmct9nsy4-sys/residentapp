@@ -18,5 +18,8 @@
     "rimraf": "^5.0.0",
     "typescript": "^5.9.3"
   },
-  "main": "dist/src/{index.js,functions/*.js}"
+  "main": "dist/src/{index.js,functions/*.js}",
+  "engines": {
+  "node": "20.x"
+}
 }
