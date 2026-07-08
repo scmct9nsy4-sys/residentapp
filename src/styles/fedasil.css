@@ -683,27 +683,34 @@ button.quarter-row:hover {
   gap: 8px;
 }
 
+/* Champ de virement : libellé + bouton « Copier » sur la 1re ligne,
+   valeur seule sur toute la largeur en 2e ligne (jamais tronquée). */
 .pay-field {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto;
   align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
+  row-gap: 4px;
+  column-gap: 10px;
   background: var(--blanc);
   border: 1.5px solid var(--bordure);
   border-radius: var(--radius);
-  padding: 8px 12px;
+  padding: 10px 12px;
 }
 
 .pay-field .pf-label {
   font-size: 0.8rem;
   color: var(--gris);
-  min-width: 150px;
+}
+
+.pay-field .btn-copy {
+  grid-row: 1;
+  grid-column: 2;
 }
 
 .pay-field .pf-value {
+  grid-column: 1 / -1;
   font-weight: 600;
-  flex: 1;
-  min-width: 0;
+  font-size: 1.05rem;
   white-space: nowrap; /* IBAN et communication toujours sur UNE ligne */
   font-variant-numeric: tabular-nums;
 }
@@ -727,17 +734,6 @@ button.quarter-row:hover {
   margin: 6px 0 0;
   font-size: 0.85rem;
   color: var(--gris);
-}
-
-@media (max-width: 480px) {
-  .pay-field .pf-label {
-    flex-basis: 100%;
-    min-width: 0;
-  }
-  /* 20 caractères (IBAN, communication) doivent tenir sur une ligne */
-  .pay-field .pf-value {
-    font-size: 0.95rem;
-  }
 }
 
 @media (max-width: 420px) {
