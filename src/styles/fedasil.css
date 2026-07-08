@@ -412,6 +412,12 @@ body {
   margin-bottom: 8px;
 }
 
+.logout-notice .logout-check {
+  display: block;
+  margin: 8px 0 0;
+  font-size: 0.85rem;
+}
+
 /* --- 10. Portail (page sécurisée) -------------------------------------------- */
 
 /* Un lien stylé en bouton (ex. déconnexion vers /.auth/logout) */
@@ -489,3 +495,106 @@ a.btn {
   display: flex;
   justify-content: flex-end;
 }
+
+/* --- 11. Portail : déclarations mensuelles et trimestre ----------------------- */
+
+/* Titre de section dans la carte du portail */
+.portal-section-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--gris-fonce);
+  margin: 26px 0 6px;
+}
+
+/* Mois de la dernière déclaration, sous le titre de section */
+.month-caption {
+  font-size: 0.9rem;
+  color: var(--gris);
+  margin: 0 0 12px;
+}
+
+/* Carte du trimestre : une ligne par mois + total */
+.quarter-card {
+  border: 1.5px solid var(--bordure);
+  border-radius: var(--radius);
+  padding: 2px 14px 12px;
+}
+
+.quarter-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 0;
+  border-top: 1px solid var(--bordure);
+  font-size: 0.95rem;
+}
+
+.quarter-row:first-child {
+  border-top: none;
+}
+
+.quarter-row .q-month {
+  font-weight: 600;
+  min-width: 92px;
+}
+
+.quarter-row .q-amounts {
+  flex: 1;
+  text-align: right;
+  color: var(--gris);
+}
+
+.quarter-row .q-check {
+  flex-shrink: 0;
+  display: inline-flex;
+  color: var(--vert);
+  min-width: 20px;
+  justify-content: center;
+}
+
+/* Mois sans déclaration : atténué, jamais alarmant */
+.quarter-row.q-missing .q-month,
+.quarter-row.q-missing .q-amounts,
+.quarter-row.q-missing .q-check {
+  color: var(--gris-clair);
+  font-weight: 400;
+}
+
+/* Ligne de total : séparateur violet clair, montants en évidence */
+.quarter-total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  border-top: 2px solid var(--violet-25);
+  padding-top: 12px;
+  margin-top: 2px;
+  font-size: 0.95rem;
+}
+
+.quarter-total .q-label {
+  font-weight: 600;
+}
+
+.quarter-total strong {
+  color: var(--violet);
+}
+
+/* Actions du portail (bascule de trimestre) */
+.portal-actions {
+  margin-top: 20px;
+}
+
+@media (max-width: 420px) {
+  .quarter-row {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+  .quarter-row .q-amounts {
+    flex-basis: 100%;
+    text-align: left;
+    order: 3;
+  }
+}
+

@@ -1,15 +1,15 @@
 // =============================================================================
 // Portail.tsx — Espace sécurisé du résident (version sans MUI)
 // -----------------------------------------------------------------------------
-// La logique est inchangée : /.auth/me → redirection connexion si besoin,
-// puis /api/me → affichage des montants (états loading / ready / nodata / error).
-// Nouveautés visuelles :
-//   - Même en-tête que le formulaire (cohérence entre les deux pages),
-//     avec le sélecteur de langue désormais disponible aussi ici
-//   - Titre avec le trait rouge de la charte
-//   - Montants présentés en tuiles (grille 2 colonnes, 1 sur mobile)
-// Après remplacement de ce fichier : MUI n'est plus utilisé nulle part →
-// on pourra désinstaller @mui/* et @emotion/*.
+// Flux : /.auth/me → redirection connexion si besoin, puis /api/me.
+// L'API renvoie désormais TOUTES les déclarations du trimestre, triées de la
+// plus récente à la plus ancienne : { quarter, months: [...] }.
+// Présentation (validée avec maquette) :
+//   1. « Votre dernière déclaration » : le mois le plus récent en tuiles
+//   2. « Trimestre en cours » : les 3 mois listés (coche = déclaré),
+//      total du trimestre (net + cotisation)
+//   3. Bouton « Voir le trimestre précédent » → /api/me?quarter=previous
+//      (même présentation, sans la section « dernière déclaration »)
 // =============================================================================
 
 import { useState, useEffect } from "react";
@@ -23,10 +23,21 @@ const labels = {
     welcome: "Bienvenue",
     activated: "Votre accès est activé.",
     intro: "Voici vos informations.",
+    lastDeclaration: "Votre dernière déclaration",
     netSalary: "Salaire net",
     grossSalary: "Salaire brut",
     contribution: "Cotisation",
     paid: "Payé",
+    netShort: "net",
+    contribShort: "cotisation",
+    quarterCurrent: "Trimestre en cours",
+    quarterPrevious: "Trimestre précédent",
+    declared: "Déclaration reçue",
+    notYetDeclared: "pas encore de déclaration",
+    quarterTotal: "Total du trimestre",
+    seePrevious: "Voir le trimestre précédent",
+    backToCurrent: "Revenir au trimestre en cours",
+    noDeclarations: "Aucune déclaration pour ce trimestre pour le moment.",
     loading: "Chargement de vos informations…",
     noData:
       "Votre compte est bien activé, mais aucune information n'est encore associée. Contactez votre personne de référence si cela persiste.",
@@ -38,10 +49,21 @@ const labels = {
     welcome: "Welkom",
     activated: "Uw toegang is geactiveerd.",
     intro: "Hier zijn uw gegevens.",
+    lastDeclaration: "Uw laatste aangifte",
     netSalary: "Nettoloon",
     grossSalary: "Brutoloon",
     contribution: "Bijdrage",
     paid: "Betaald",
+    netShort: "netto",
+    contribShort: "bijdrage",
+    quarterCurrent: "Huidig kwartaal",
+    quarterPrevious: "Vorig kwartaal",
+    declared: "Aangifte ontvangen",
+    notYetDeclared: "nog geen aangifte",
+    quarterTotal: "Totaal van het kwartaal",
+    seePrevious: "Vorig kwartaal bekijken",
+    backToCurrent: "Terug naar het huidige kwartaal",
+    noDeclarations: "Nog geen aangiften voor dit kwartaal.",
     loading: "Uw gegevens worden geladen…",
     noData:
       "Uw account is geactiveerd, maar er zijn nog geen gegevens gekoppeld. Neem contact op met uw contactpersoon als dit blijft duren.",
@@ -53,10 +75,21 @@ const labels = {
     welcome: "Welcome",
     activated: "Your access is now active.",
     intro: "Here is your information.",
+    lastDeclaration: "Your latest declaration",
     netSalary: "Net salary",
     grossSalary: "Gross salary",
     contribution: "Contribution",
     paid: "Paid",
+    netShort: "net",
+    contribShort: "contribution",
+    quarterCurrent: "Current quarter",
+    quarterPrevious: "Previous quarter",
+    declared: "Declaration received",
+    notYetDeclared: "no declaration yet",
+    quarterTotal: "Quarter total",
+    seePrevious: "View previous quarter",
+    backToCurrent: "Back to current quarter",
+    noDeclarations: "No declarations for this quarter yet.",
     loading: "Loading your information…",
     noData:
       "Your account is active, but no information is linked yet. Contact your reference person if this persists.",
@@ -66,14 +99,53 @@ const labels = {
   },
 } as const;
 
-type CumulData = {
-  netSalary: string;
-  grossSalary: string;
-  contribution: string;
-  paid: string;
+// --- Types (alignés sur la réponse de /api/me) ----------------------------------
+
+type MonthlyDeclaration = {
+  month: number;
+  netSalary: number | null;
+  grossSalary: number | null;
+  contribution: number | null;
+  paid: number | null;
+};
+
+type MeResponse = {
+  quarter: number | null;
+  months: MonthlyDeclaration[]; // trié du plus récent au plus ancien
 };
 
 type Status = "loading" | "ready" | "nodata" | "error";
+type PrevStatus = "idle" | "loading" | "ready" | "error";
+
+// --- Formatage (mois et montants, selon la langue de l'interface) ----------------
+
+const LOCALES: Record<Language, string> = {
+  fr: "fr-BE",
+  nl: "nl-BE",
+  en: "en-GB",
+};
+
+/** Nom du mois (1-12) dans la langue courante, avec majuscule initiale. */
+function monthName(month: number, lang: Language): string {
+  const name = new Date(2000, month - 1, 1).toLocaleDateString(LOCALES[lang], {
+    month: "long",
+  });
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
+/** Montant en euros ("—" si absent). */
+function euro(value: number | null, lang: Language): string {
+  if (value === null) return "—";
+  return new Intl.NumberFormat(LOCALES[lang], {
+    style: "currency",
+    currency: "EUR",
+  }).format(value);
+}
+
+/** Les 3 mois d'un trimestre (ex. 4 -> [10, 11, 12]). */
+function quarterMonths(quarter: number): number[] {
+  return [quarter * 3 - 2, quarter * 3 - 1, quarter * 3];
+}
 
 // --- Petits composants de présentation ----------------------------------------
 
@@ -106,12 +178,12 @@ function LangPills({
   );
 }
 
-/** Coche verte (remplace CheckCircleOutlineIcon, sans dépendance). */
-function CheckIcon() {
+/** Coche verte (sans dépendance). */
+function CheckIcon({ size = 22 }: { size?: number }) {
   return (
     <svg
-      width="22"
-      height="22"
+      width={size}
+      height={size}
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -144,6 +216,66 @@ function DataTile({
   );
 }
 
+/** Carte trimestre : une ligne par mois (coche = déclaré) + total. */
+function QuarterCard({
+  data,
+  lang,
+}: {
+  data: MeResponse;
+  lang: Language;
+}) {
+  const t = labels[lang];
+  const byMonth = new Map(data.months.map((m) => [m.month, m]));
+
+  // Les 3 mois du trimestre si connu, sinon uniquement les mois déclarés.
+  const monthsToShow =
+    data.quarter !== null
+      ? quarterMonths(data.quarter)
+      : [...byMonth.keys()].sort((a, b) => a - b);
+
+  const totalNet = data.months.reduce((s, m) => s + (m.netSalary ?? 0), 0);
+  const totalContrib = data.months.reduce(
+    (s, m) => s + (m.contribution ?? 0),
+    0
+  );
+
+  return (
+    <div className="quarter-card">
+      {monthsToShow.map((month) => {
+        const decl = byMonth.get(month);
+        return decl ? (
+          <div className="quarter-row" key={month}>
+            <span className="q-month">{monthName(month, lang)}</span>
+            <span className="q-amounts">
+              {t.netShort} {euro(decl.netSalary, lang)} · {t.contribShort}{" "}
+              {euro(decl.contribution, lang)}
+            </span>
+            <span className="q-check" role="img" aria-label={t.declared}>
+              <CheckIcon size={18} />
+            </span>
+          </div>
+        ) : (
+          <div className="quarter-row q-missing" key={month}>
+            <span className="q-month">{monthName(month, lang)}</span>
+            <span className="q-amounts">{t.notYetDeclared}</span>
+            <span className="q-check" aria-hidden="true">
+              —
+            </span>
+          </div>
+        );
+      })}
+
+      <div className="quarter-total">
+        <span className="q-label">{t.quarterTotal}</span>
+        <span>
+          {t.netShort} <strong>{euro(totalNet, lang)}</strong> ·{" "}
+          {t.contribShort} <strong>{euro(totalContrib, lang)}</strong>
+        </span>
+      </div>
+    </div>
+  );
+}
+
 // --- Composant principal --------------------------------------------------------
 
 export default function Portail() {
@@ -151,7 +283,12 @@ export default function Portail() {
   const t = labels[language];
 
   const [status, setStatus] = useState<Status>("loading");
-  const [data, setData] = useState<CumulData | null>(null);
+  const [current, setCurrent] = useState<MeResponse | null>(null);
+
+  // Trimestre précédent : chargé à la demande, puis gardé en mémoire.
+  const [view, setView] = useState<"current" | "previous">("current");
+  const [prevStatus, setPrevStatus] = useState<PrevStatus>("idle");
+  const [previous, setPrevious] = useState<MeResponse | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -184,8 +321,8 @@ export default function Portail() {
           return;
         }
 
-        const json = (await res.json()) as CumulData;
-        setData(json);
+        const json = (await res.json()) as MeResponse;
+        setCurrent(json);
         setStatus("ready");
       } catch {
         if (!cancelled) setStatus("error");
@@ -197,6 +334,36 @@ export default function Portail() {
       cancelled = true;
     };
   }, []);
+
+  // Bascule vers le trimestre précédent (chargé une seule fois).
+  const showPrevious = async () => {
+    setView("previous");
+    if (prevStatus !== "idle") return;
+    setPrevStatus("loading");
+    try {
+      const res = await fetch("/api/me?quarter=previous");
+      if (!res.ok) {
+        setPrevStatus("error");
+        return;
+      }
+      const json = (await res.json()) as MeResponse;
+      setPrevious(json);
+      setPrevStatus("ready");
+    } catch {
+      setPrevStatus("error");
+    }
+  };
+
+  const latest = current?.months[0] ?? null;
+
+  const quarterTitle = (data: MeResponse | null, base: string): string => {
+    if (!data || data.quarter === null) return base;
+    const [first, , last] = quarterMonths(data.quarter);
+    return `${base} (${monthName(first, language).toLowerCase()} – ${monthName(
+      last,
+      language
+    ).toLowerCase()})`;
+  };
 
   return (
     <>
@@ -246,13 +413,102 @@ export default function Portail() {
             </div>
           )}
 
-          {status === "ready" && data && (
-            <div className="data-grid">
-              <DataTile label={t.grossSalary} value={data.grossSalary} />
-              <DataTile label={t.netSalary} value={data.netSalary} highlight />
-              <DataTile label={t.contribution} value={data.contribution} />
-              <DataTile label={t.paid} value={data.paid} />
-            </div>
+          {/* ---------- Vue : trimestre en cours ---------- */}
+          {status === "ready" && current && view === "current" && (
+            <>
+              {current.months.length === 0 ? (
+                <div className="alert alert-info" role="status">
+                  {t.noDeclarations}
+                </div>
+              ) : (
+                <>
+                  <h2 className="portal-section-title">{t.lastDeclaration}</h2>
+                  {latest && (
+                    <>
+                      <p className="month-caption">
+                        {monthName(latest.month, language)}
+                      </p>
+                      <div className="data-grid">
+                        <DataTile
+                          label={t.grossSalary}
+                          value={euro(latest.grossSalary, language)}
+                        />
+                        <DataTile
+                          label={t.netSalary}
+                          value={euro(latest.netSalary, language)}
+                          highlight
+                        />
+                        <DataTile
+                          label={t.contribution}
+                          value={euro(latest.contribution, language)}
+                        />
+                        <DataTile
+                          label={t.paid}
+                          value={euro(latest.paid, language)}
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  <h2 className="portal-section-title">
+                    {quarterTitle(current, t.quarterCurrent)}
+                  </h2>
+                  <QuarterCard data={current} lang={language} />
+                </>
+              )}
+
+              <div className="portal-actions">
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  onClick={showPrevious}
+                >
+                  {t.seePrevious}
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* ---------- Vue : trimestre précédent ---------- */}
+          {status === "ready" && view === "previous" && (
+            <>
+              <h2 className="portal-section-title">
+                {quarterTitle(previous, t.quarterPrevious)}
+              </h2>
+
+              {prevStatus === "loading" && (
+                <div className="loading-row" role="status">
+                  <span className="spinner spinner-violet" aria-hidden="true" />
+                  <span>{t.loading}</span>
+                </div>
+              )}
+
+              {prevStatus === "error" && (
+                <div className="alert alert-error" role="alert">
+                  {t.error}
+                </div>
+              )}
+
+              {prevStatus === "ready" &&
+                previous &&
+                (previous.months.length === 0 ? (
+                  <div className="alert alert-info" role="status">
+                    {t.noDeclarations}
+                  </div>
+                ) : (
+                  <QuarterCard data={previous} lang={language} />
+                ))}
+
+              <div className="portal-actions">
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  onClick={() => setView("current")}
+                >
+                  {t.backToCurrent}
+                </button>
+              </div>
+            </>
           )}
 
           <div className="card-footer">
