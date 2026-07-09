@@ -56,6 +56,23 @@
       ]
     },
     {
+      "displayName": "ResidentApp Aidants",
+      "description": "GARDE-FOU : adresses e-mail PROFESSIONNELLES (membres internes du tenant, ex. assistantes sociales) autorisées à se lier à des dossiers residents via la pré-inscription. Une adresse interne ABSENTE de cette liste est refusée (fail-closed : liste vide ou illisible = personne d'autorisé). Sans effet sur les invités externes (résidents/familles). Gérée par le staff dans SharePoint.",
+      "columns": [
+        {
+          "name": "Title",
+          "type": "text",
+          "documentOnly": true,
+          "note": "Colonne intégrée SharePoint. Contient l'ADRESSE E-MAIL professionnelle, EN MINUSCULES (ex. prenom.nom@fedasil.be). Variable SP_STAFF_EMAIL_FIELD=Title."
+        },
+        {
+          "name": "Label",
+          "type": "text",
+          "note": "Nom / fonction de la personne (documentation staff, non utilisé par le code)."
+        }
+      ]
+    },
+    {
       "displayName": "KB-Cumul T4",
       "description": "Déclarations mensuelles du trimestre 4 (année implicite — gouvernance de l'année : voir option 2 de la feuille de route). Une ligne = un mois pour un FA (totaux).",
       "columns": [

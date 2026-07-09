@@ -30,6 +30,37 @@ import { buildInvitationEmail } from "./invitationEmail";
 //  avec SON numéro national ; plusieurs lignes resident portent alors le
 //  même oid, et le portail propose un sélecteur de profil (voir Me.ts).
 //
+//  Aidants (ex. assistante sociale en centre) : dérivé du cas famille. Un
+//  aidant s'inscrit avec SON adresse e-mail + le NN de chaque résident aidé,
+//  et gère leurs déclarations via le sélecteur de profils.
+//  ⚠ RÈGLE : un dossier resident = UN SEUL compte lié à la fois. La
+//  ré-inscription par NN TRANSFÈRE l'accès (remplace e-mail + oid sur la
+//  ligne) — elle ne le partage pas. Si le résident reprend la main, il
+//  refait simplement sa pré-inscription (même mécanisme, §5.3/§5.4).
+//
+//  COMPTES INTERNES (membres du tenant, ex. personnel @fedasil) : Graph
+//  REFUSE d'inviter une adresse d'un domaine vérifié du tenant (un membre ne
+//  peut pas être invité chez lui). On cherche donc l'utilisateur AVANT
+//  d'inviter : s'il existe comme MEMBRE, on relie directement son oid à la
+//  ligne resident (aucune invitation) et l'e-mail de confirmation pointe vers
+//  le portail (pas de lien d'activation à racheter). Les membres bénéficient
+//  des protections de l'organisation (MFA, accès conditionnel). Invités et
+//  inconnus suivent le flux d'invitation habituel (idempotent).
+//
+//  GARDE-FOU AIDANTS : seuls les membres internes dont l'adresse figure dans
+//  la liste SharePoint « ResidentApp Aidants » (colonne Title = e-mail en
+//  minuscules) peuvent se lier à des dossiers. Comportement FAIL-CLOSED :
+//  liste absente, vide ou illisible => AUCUN membre autorisé (message neutre
+//  403). Sans effet sur les invités externes (résidents/familles). La liste
+//  est gérée par le staff dans SharePoint (créable via sp:provision).
+//
+//  PRÉNOM / NOM : plus jamais demandés au formulaire. Ils font foi dans la
+//  liste Residents (colonnes FirstName/LastName), retrouvée par NN AVANT
+//  l'invitation. On les lit ici pour le displayName de l'invitation et le
+//  prénom de l'e-mail : données officielles, zéro faute de frappe.
+//  NB : le nom n'est jamais renvoyé au navigateur à cette étape (ce serait
+//  un oracle NN -> nom) ; il ne circule que vers Graph et l'e-mail.
+//
 //  La liaison est NON BLOQUANTE : si l'écriture SharePoint échoue, la
 //  pré-inscription reste un succès (le compte invité existe déjà) ; le
 //  repli par e-mail unique dans Me.ts/Declare.ts prend alors le relais.
@@ -39,11 +70,13 @@ import { buildInvitationEmail } from "./invitationEmail";
 
 type PreInscriptionBody = {
   nationalId?: string;
+  email?: string;
+  contactLanguage?: string;
+  // Champs HISTORIQUES : encore acceptés (anciens clients/caches) mais
+  // totalement IGNORÉS — les nom/prénom font foi dans la liste resident.
   firstName?: string;
   lastName?: string;
-  email?: string;
   username?: string;
-  contactLanguage?: string;
 };
 
 type CreateUserResult = {
@@ -70,6 +103,25 @@ const SP_EMAIL_FIELD = process.env["SP_EMAIL_FIELD"] ?? "Email";
 const SP_RESIDENT_OID_FIELD =
   process.env["SP_RESIDENT_OID_FIELD"] ?? "EntraOid";
 
+// Colonnes prénom/nom de la liste resident (mêmes défauts que Me.ts) :
+// LUES ici pour l'invitation B2B et l'e-mail (le formulaire ne les demande plus).
+const SP_FIRSTNAME_FIELD = process.env["SP_FIRSTNAME_FIELD"] ?? "FirstName";
+const SP_LASTNAME_FIELD = process.env["SP_LASTNAME_FIELD"] ?? "LastName";
+
+// Liste garde-fou des aidants internes autorisés (voir en-tête).
+// SP_STAFF_LIST_ID facultatif (résolution par nom sinon) ; la colonne e-mail
+// est Title par défaut. Stocker les adresses EN MINUSCULES dans la liste.
+const SP_STAFF_LIST_ID = process.env["SP_STAFF_LIST_ID"];
+const SP_STAFF_LIST_NAME =
+  process.env["SP_STAFF_LIST_NAME"] ?? "ResidentApp Aidants";
+const SP_STAFF_EMAIL_FIELD = process.env["SP_STAFF_EMAIL_FIELD"] ?? "Title";
+
+// Refus d'un membre interne hors liste : message neutre (ne confirme ni que
+// l'adresse existe dans Entra, ni le mécanisme de liste).
+const STAFF_NOT_ALLOWED_MESSAGE =
+  "Cette adresse ne peut pas être utilisée pour la pré-inscription. " +
+  "Contactez votre référent ResidentApp.";
+
 // ⚠️ À MODIFIER POUR LA PRODUCTION ⚠️
 // INVITE_REDIRECT_URL = adresse où l'utilisateur est renvoyé après avoir
 // accepté son invitation.
@@ -82,6 +134,15 @@ const SP_RESIDENT_OID_FIELD =
 //   - local      -> api/local.settings.json
 //   - production -> Azure > Static Web App / Function App > Configuration
 const INVITE_REDIRECT_URL = process.env["INVITE_REDIRECT_URL"];
+
+// URL du portail, utilisée dans l'e-mail de confirmation des MEMBRES internes
+// (pas de lien d'activation à racheter : ils se connectent directement).
+// Par défaut : INVITE_REDIRECT_URL + /portail ; surchargée via PORTAL_URL.
+const PORTAL_URL =
+  process.env["PORTAL_URL"] ??
+  (INVITE_REDIRECT_URL
+    ? `${INVITE_REDIRECT_URL.replace(/\/+$/, "")}/portail`
+    : undefined);
 
 // Active la validation du checksum (modulo 97) du numéro national belge.
 // Désactivée par défaut pour ne pas bloquer d'éventuels numéros de test
@@ -240,14 +301,21 @@ async function getSiteId(
 }
 
 // Recherche la ligne resident par numéro national.
-// Renvoie l'ID de l'élément SharePoint (nécessaire pour la liaison e-mail/oid
-// après invitation), ou null si le numéro n'est pas dans la liste (inéligible).
-async function findResidentItemIdByNationalId(
+// Renvoie l'ID de l'élément SharePoint (nécessaire pour la liaison e-mail/oid)
+// AINSI QUE le prénom et le nom officiels (pour l'invitation B2B et l'e-mail),
+// ou null si le numéro n'est pas dans la liste (inéligible).
+type ResidentMatch = {
+  itemId: string;
+  firstName: string;
+  lastName: string;
+};
+
+async function findResidentByNationalId(
   nationalId: string,
   token: string,
   siteId: string,
   context: InvocationContext
-): Promise<string | null> {
+): Promise<ResidentMatch | null> {
   if (!SP_LIST_ID) {
     context.log("Configuration SharePoint manquante (SP_LIST_ID).");
     throw new Error(
@@ -262,7 +330,8 @@ async function findResidentItemIdByNationalId(
 
   const listItemsUrl =
     `https://graph.microsoft.com/v1.0/sites/${siteId}/lists/${SP_LIST_ID}` +
-    `/items?$select=id&$expand=fields($select=${SP_NATIONALID_FIELD})` +
+    `/items?$select=id&$expand=fields($select=${SP_NATIONALID_FIELD},` +
+    `${SP_FIRSTNAME_FIELD},${SP_LASTNAME_FIELD})` +
     `&$filter=fields/${SP_NATIONALID_FIELD} eq '${encodedNationalId}'`;
 
   const listResponse = await fetch(listItemsUrl, {
@@ -282,18 +351,25 @@ async function findResidentItemIdByNationalId(
   }
 
   const listJson = (await listResponse.json()) as {
-    value?: Array<{ id?: string }>;
+    value?: Array<{ id?: string; fields?: Record<string, unknown> }>;
   };
-  const itemId = listJson.value?.[0]?.id ?? null;
+  const item = listJson.value?.[0];
 
-  // Log minimisé : on ne trace que le résultat booléen + un id masqué.
+  // Log minimisé : on ne trace que le résultat booléen (jamais le nom).
   context.log(
     `Vérification éligibilité pour ${maskNationalId(nationalId)} : ${
-      itemId ? "trouvé" : "non trouvé"
+      item?.id ? "trouvé" : "non trouvé"
     }`
   );
 
-  return itemId;
+  if (!item?.id) return null;
+
+  const fields = item.fields ?? {};
+  return {
+    itemId: item.id,
+    firstName: String(fields[SP_FIRSTNAME_FIELD] ?? "").trim(),
+    lastName: String(fields[SP_LASTNAME_FIELD] ?? "").trim(),
+  };
 }
 
 // ---------- Liaison resident <-> compte invité (e-mail + oid) ----------
@@ -364,17 +440,17 @@ function requireInviteRedirectUrl(context: InvocationContext): string {
 }
 
 // ---------- Création de l'utilisateur externe via invitation B2B ----------
+// displayName = prénom + nom OFFICIELS lus dans la liste resident (jamais
+// saisis par l'utilisateur). NB : pour un invité DÉJÀ existant (famille,
+// aidant, ré-inscription), Graph renvoie le compte existant SANS renommer
+// son displayName — cosmétique uniquement, le portail identifie les
+// personnes via le sélecteur de profils, pas via le nom du compte Microsoft.
 
 async function createExternalUser(
-  input: PreInscriptionBody,
+  email: string,
+  displayName: string,
   context: InvocationContext
 ): Promise<CreateUserResult> {
-  const { firstName, lastName, email } = input;
-
-  if (!firstName || !lastName || !email) {
-    throw new Error("Données utilisateur incomplètes pour l'invitation externe.");
-  }
-
   const cleanedEmail = email.trim().toLowerCase();
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(cleanedEmail)) {
@@ -386,15 +462,18 @@ async function createExternalUser(
   const accessToken = await getGraphToken(context);
 
   const graphUrl = "https://graph.microsoft.com/v1.0/invitations";
-  const displayName = `${firstName} ${lastName}`.trim();
 
-  const inviteBody = {
+  const inviteBody: Record<string, unknown> = {
     invitedUserEmailAddress: cleanedEmail,
     inviteRedirectUrl: redirectUrl,
-    invitedUserDisplayName: displayName,
     sendInvitationMessage: false,
     invitedUserType: "Guest",
   };
+  // displayName facultatif côté Graph : omis si la liste ne le fournit pas
+  // (ne devrait pas arriver — colonnes obligatoires côté staff).
+  if (displayName) {
+    inviteBody["invitedUserDisplayName"] = displayName;
+  }
 
   // On ne logge plus le corps complet (contient nom + e-mail).
   context.log("Envoi invitation Graph pour:", maskEmail(cleanedEmail));
@@ -443,10 +522,14 @@ async function createExternalUser(
 // Renvoie true si l'e-mail est parti, false sinon. NE lève PLUS d'exception :
 // si l'invitation est créée mais que l'e-mail échoue, on ne veut pas renvoyer
 // une 500 alors que le compte existe déjà (incohérence d'état).
+// NB : pour un MEMBRE interne, inviteRedeemUrl contient l'URL du portail
+// (PORTAL_URL) — il n'y a pas d'invitation à racheter, on se connecte
+// directement. Si PORTAL_URL est indisponible, l'e-mail est simplement omis.
 
 async function sendConfirmationEmail(
   user: CreateUserResult,
-  input: PreInscriptionBody,
+  contactLanguage: string | undefined,
+  firstName: string,
   context: InvocationContext
 ): Promise<boolean> {
   if (!GRAPH_SENDER_USER_ID) {
@@ -465,10 +548,12 @@ async function sendConfirmationEmail(
       GRAPH_SENDER_USER_ID
     )}/sendMail`;
 
-    // Texte de l'e-mail dans la langue du résident (FR/NL/EN)
+    // Texte de l'e-mail dans la langue du résident (FR/NL/EN).
+    // Le prénom vient de la liste resident : « Bonjour <Prénom> » confirme
+    // ainsi QUEL profil vient d'être activé (utile familles et aidants).
     const { subject, html } = buildInvitationEmail(
-      input.contactLanguage,
-      input.firstName ?? "",
+      contactLanguage,
+      firstName,
       user.inviteRedeemUrl
     );
 
@@ -505,6 +590,128 @@ async function sendConfirmationEmail(
     context.log("Exception lors de l'envoi de l'e-mail:", error);
     return false;
   }
+}
+
+// ---------- Garde-fou : e-mail interne autorisé ? ----------
+// FAIL-CLOSED : toute impossibilité de vérifier (liste introuvable, erreur
+// Graph, colonne absente) => NON autorisé. C'est un contrôle de sécurité :
+// il vaut mieux bloquer un aidant légitime (qui contactera son référent)
+// que laisser passer n'importe quel compte interne.
+
+async function findStaffListId(
+  siteId: string,
+  token: string,
+  context: InvocationContext
+): Promise<string | null> {
+  if (SP_STAFF_LIST_ID) return SP_STAFF_LIST_ID;
+  const url =
+    `https://graph.microsoft.com/v1.0/sites/${siteId}/lists` +
+    `?$select=id,displayName&$top=200`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    context.log("Erreur lecture des listes (garde-fou aidants), statut:", res.status);
+    return null;
+  }
+  const json = (await res.json()) as {
+    value?: Array<{ id?: string; displayName?: string }>;
+  };
+  const found = json.value?.find(
+    (l) =>
+      (l.displayName ?? "").trim().toLowerCase() ===
+      SP_STAFF_LIST_NAME.trim().toLowerCase()
+  );
+  return found?.id ?? null;
+}
+
+async function isStaffEmailAllowed(
+  email: string,
+  siteId: string,
+  token: string,
+  context: InvocationContext
+): Promise<boolean> {
+  try {
+    const listId = await findStaffListId(siteId, token, context);
+    if (!listId) {
+      context.log(
+        `Liste garde-fou « ${SP_STAFF_LIST_NAME} » introuvable : refus (fail-closed).`
+      );
+      return false;
+    }
+
+    const encoded = email.replace(/'/g, "''");
+    const url =
+      `https://graph.microsoft.com/v1.0/sites/${siteId}/lists/${listId}` +
+      `/items?$select=id&$expand=fields($select=${SP_STAFF_EMAIL_FIELD})` +
+      `&$filter=fields/${SP_STAFF_EMAIL_FIELD} eq '${encoded}'`;
+
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      context.log("Erreur lecture garde-fou aidants, statut:", res.status);
+      return false; // fail-closed
+    }
+    const json = (await res.json()) as { value?: unknown[] };
+    const allowed = (json.value?.length ?? 0) > 0;
+    context.log(
+      `Garde-fou aidants pour ${maskEmail(email)} : ${
+        allowed ? "AUTORISÉ" : "refusé"
+      }`
+    );
+    return allowed;
+  } catch (error) {
+    context.log("Exception garde-fou aidants (fail-closed):", error);
+    return false;
+  }
+}
+
+// ---------- Recherche d'un MEMBRE interne par e-mail ----------
+// Appelée AVANT l'invitation : Graph refuse d'inviter une adresse d'un
+// domaine vérifié du tenant. Si l'adresse correspond à un utilisateur de
+// type "Member" (personnel interne), on renvoie son oid pour une liaison
+// directe. Les invités (Guest) renvoient null ici : ils passent par le flux
+// d'invitation habituel, dont l'idempotence fournit un lien d'activation
+// aux comptes non encore rachetés.
+
+async function findMemberByEmail(
+  email: string,
+  token: string,
+  context: InvocationContext
+): Promise<{ id: string } | null> {
+  const encodedEmail = email.replace(/'/g, "''");
+  const url =
+    "https://graph.microsoft.com/v1.0/users?$select=id,userType&" +
+    `$filter=mail eq '${encodedEmail}' or userPrincipalName eq '${encodedEmail}'`;
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    context.log(
+      "Erreur Graph /users (recherche membre), statut:",
+      response.status,
+      text
+    );
+    throw new Error("Impossible de vérifier le type de compte dans Entra.");
+  }
+
+  const json = (await response.json()) as {
+    value?: Array<{ id?: string; userType?: string }>;
+  };
+  const member = json.value?.find(
+    (u) => (u.userType ?? "").toLowerCase() === "member" && u.id
+  );
+
+  if (member?.id) {
+    context.log("Adresse reconnue comme MEMBRE interne : liaison directe.");
+    return { id: member.id };
+  }
+  return null;
 }
 
 // ---------- Vérification d'existence d'un invité ----------
@@ -592,7 +799,7 @@ export async function Subscription(
     }
 
     const body = (await request.json()) as PreInscriptionBody;
-    const { nationalId, firstName, lastName, email } = body ?? {};
+    const { nationalId, email, contactLanguage } = body ?? {};
 
     // Log minimisé : jamais le payload brut.
     context.log(
@@ -601,11 +808,12 @@ export async function Subscription(
       )}, email=${maskEmail(email)})`
     );
 
-    if (!nationalId || !firstName || !lastName || !email) {
+    // Prénom/nom NE SONT PLUS requis : ils font foi dans la liste resident.
+    if (!nationalId || !email) {
       return {
         status: 400,
         jsonBody: {
-          message: "Données manquantes (numéro national, prénom, nom, e-mail).",
+          message: "Données manquantes (numéro national, e-mail).",
         },
       };
     }
@@ -624,28 +832,64 @@ export async function Subscription(
     }
 
     // 1. Éligibilité : le NN doit exister dans la liste resident.
-    //    On récupère l'ID de l'élément pour la liaison e-mail/oid (étape 3).
+    //    On récupère l'ID de l'élément (liaison e-mail/oid, étape 3) et les
+    //    prénom/nom OFFICIELS (invitation + e-mail). Rien de tout cela n'est
+    //    renvoyé au navigateur (anti-oracle NN -> nom).
     const graphToken = await getGraphToken(context);
     const siteId = await getSiteId(graphToken, context);
-    const residentItemId = await findResidentItemIdByNationalId(
+    const resident = await findResidentByNationalId(
       nationalId,
       graphToken,
       siteId,
       context
     );
-    if (!residentItemId) {
+    if (!resident) {
       return { status: 400, jsonBody: { message: GENERIC_INELIGIBLE } };
     }
+    const displayName = `${resident.firstName} ${resident.lastName}`.trim();
 
-    // 2. Invitation B2B (idempotente côté Graph : réinviter renvoie l'invité existant)
-    const createdUser = await createExternalUser(body, context);
+    // 2. Compte de connexion :
+    //    a) MEMBRE interne (personnel) -> liaison directe de son oid, AUCUNE
+    //       invitation (Graph la refuserait : domaine vérifié du tenant).
+    //       L'e-mail de confirmation pointera vers le portail (PORTAL_URL).
+    //    b) Sinon (invité existant ou nouvel externe) -> invitation B2B,
+    //       idempotente côté Graph (réinviter renvoie l'invité existant).
+    const cleanedEmail = email.trim().toLowerCase();
+    // Revalidation serveur du format (le front est contournable) — vaut pour
+    // les DEUX branches (membre interne et invitation).
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanedEmail)) {
+      return {
+        status: 400,
+        jsonBody: { message: "L'adresse e-mail fournie n'est pas valide." },
+      };
+    }
+    const member = await findMemberByEmail(cleanedEmail, graphToken, context);
+
+    // Garde-fou : un MEMBRE interne doit figurer dans la liste des aidants
+    // autorisés (fail-closed). Sans effet sur les invités/externes.
+    if (member) {
+      const allowed = await isStaffEmailAllowed(
+        cleanedEmail,
+        siteId,
+        graphToken,
+        context
+      );
+      if (!allowed) {
+        return { status: 403, jsonBody: { message: STAFF_NOT_ALLOWED_MESSAGE } };
+      }
+    }
+
+    const createdUser: CreateUserResult = member
+      ? { id: member.id, email: cleanedEmail, inviteRedeemUrl: PORTAL_URL }
+      : await createExternalUser(email, displayName, context);
 
     // 3. Liaison resident <-> compte invité : e-mail + oid écrits sur la ligne
     //    retrouvée par numéro national. Couvre inscription initiale,
-    //    changement d'e-mail et récupération après suppression de compte.
-    //    NON BLOQUANT en cas d'échec.
+    //    changement d'e-mail, récupération après suppression de compte, et
+    //    prise en charge par un aidant (TRANSFERT d'accès : un dossier = un
+    //    compte lié à la fois). NON BLOQUANT en cas d'échec.
     await linkResidentToGuest(
-      residentItemId,
+      resident.itemId,
       createdUser,
       graphToken,
       siteId,
@@ -653,7 +897,12 @@ export async function Subscription(
     );
 
     // 4. E-mail de confirmation (échec non bloquant)
-    const emailSent = await sendConfirmationEmail(createdUser, body, context);
+    const emailSent = await sendConfirmationEmail(
+      createdUser,
+      contactLanguage,
+      resident.firstName,
+      context
+    );
 
     return {
       status: 200,
