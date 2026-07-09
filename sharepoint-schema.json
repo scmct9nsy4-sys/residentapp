@@ -1,0 +1,73 @@
+{
+  "_documentation": [
+    "SCHÉMA DES LISTES SHAREPOINT — ResidentApp (Fedasil)",
+    "Ce fichier décrit l'état VOULU de la 'base de données' SharePoint.",
+    "Il est appliqué par : npm run sp:provision  (idempotent, ne supprime jamais rien).",
+    "Pour relever l'état RÉEL (noms internes, types) : npm run sp:inspect",
+    "",
+    "Champs d'une colonne :",
+    "  name         nom INTERNE de la colonne (celui utilisé par l'API et les variables SP_*_FIELD)",
+    "  type         text | note | number | boolean | dateTime | choice",
+    "  choices      liste des valeurs (type choice uniquement)",
+    "  documentOnly true = la colonne existe déjà (créée à la main) : le script vérifie sa présence",
+    "               mais ne la crée jamais.",
+    "  note         commentaire libre (documentation)"
+  ],
+  "lists": [
+    {
+      "displayName": "Residents List",
+      "description": "Table de correspondance d'identité : une ligne par PERSONNE. NN (colonne Title) = clé d'éligibilité/récupération, FA = clé maîtresse des données, Email/EntraOid = liens (modifiables, non uniques) vers le compte de connexion.",
+      "columns": [
+        {
+          "name": "Title",
+          "type": "text",
+          "documentOnly": true,
+          "note": "Colonne intégrée SharePoint. Contient le NUMÉRO NATIONAL (SP_NATIONALID_FIELD=Title). À confirmer en ouvrant une ligne."
+        },
+        {
+          "name": "FirstName",
+          "type": "text",
+          "documentOnly": true,
+          "note": "Prénom. Variable SP_FIRSTNAME_FIELD=FirstName."
+        },
+        {
+          "name": "LastName",
+          "type": "text",
+          "documentOnly": true,
+          "note": "Nom. Variable SP_LASTNAME_FIELD=LastName."
+        },
+        {
+          "name": "Email",
+          "type": "text",
+          "documentOnly": true,
+          "note": "Adresse de contact. Modifiable, NON unique (familles). Écrite par /api/pre-inscription."
+        },
+        {
+          "name": "FedasilNumber",
+          "type": "text",
+          "documentOnly": true,
+          "note": "Clé maîtresse (FA). Unique et permanente. Saisie par le staff."
+        },
+        {
+          "name": "EntraOid",
+          "type": "text",
+          "note": "SEULE colonne à créer. oid du compte invité Entra. Écrit par /api/pre-inscription (et auto-réparation dans /api/me et /api/declare). Plusieurs lignes peuvent porter le même oid (familles). Variable SP_RESIDENT_OID_FIELD=EntraOid."
+        }
+      ]
+    },
+    {
+      "displayName": "KB-Cumul T4",
+      "description": "Déclarations mensuelles du trimestre 4 (année implicite — gouvernance de l'année : voir option 2 de la feuille de route). Une ligne = un mois pour un FA (totaux).",
+      "columns": [
+        { "name": "FedasilNumber", "type": "text", "documentOnly": true, "note": "FA (type texte confirmé par sp:inspect -> SP_FA_IS_NUMBER reste false)." },
+        { "name": "Month", "type": "number", "documentOnly": true },
+        { "name": "NetSalary", "type": "number", "documentOnly": true },
+        { "name": "GrossSalary", "type": "number", "documentOnly": true },
+        { "name": "Contribution", "type": "number", "documentOnly": true },
+        { "name": "Paid", "type": "number", "documentOnly": true },
+        { "name": "StructuredCom", "type": "text", "documentOnly": true },
+        { "name": "StructuredText", "type": "text", "documentOnly": true, "note": "Colonne existante (usage historique)." }
+      ]
+    }
+  ]
+}
