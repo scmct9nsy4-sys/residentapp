@@ -100,6 +100,7 @@ function buildStructuredCom(fedasilNumber: string, month: number): string {
 // ---------- Helpers (mêmes conventions que Me.ts) ----------
 
 type ClientPrincipal = {
+  userId?: string;
   userDetails?: string;
   claims?: Array<{ typ: string; val: string }>;
 };
@@ -131,8 +132,18 @@ function getClientPrincipal(request: HttpRequest): ClientPrincipal | null {
   }
 }
 
-// Extrait l'oid Entra des claims du jeton (auth personnalisée uniquement ;
-// renvoie null en local avec le simulateur SWA -> repli e-mail).
+// GUID Entra (oid) : 8-4-4-4-12 hexa.
+const GUID_RE =
+  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+// Extrait l'oid Entra du principal.
+// IMPORTANT : avec l'auth personnalisée SWA, le header x-ms-client-principal
+// transmis à la fonction ne contient PAS toujours le tableau `claims` détaillé
+// (celui-ci n'est visible que sur /.auth/me côté navigateur). En revanche,
+// `userId` EST l'oid pour le fournisseur AAD. On lit donc, dans l'ordre :
+//   1) le claim objectidentifier s'il est présent ;
+//   2) sinon userId (oid AAD), validé comme GUID.
+// En local (simulateur SWA), userId n'est pas un GUID -> null -> repli e-mail.
 function getOid(principal: ClientPrincipal): string | null {
   const claim = principal.claims?.find(
     (c) =>
@@ -140,8 +151,13 @@ function getOid(principal: ClientPrincipal): string | null {
         "http://schemas.microsoft.com/identity/claims/objectidentifier" ||
       c.typ === "oid"
   );
-  const val = claim?.val?.trim() ?? "";
-  return val !== "" ? val : null;
+  const fromClaim = claim?.val?.trim() ?? "";
+  if (fromClaim !== "") return fromClaim;
+
+  const fromUserId = principal.userId?.trim() ?? "";
+  if (GUID_RE.test(fromUserId)) return fromUserId;
+
+  return null;
 }
 
 function quarterFromListName(name: string): number | null {
