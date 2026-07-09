@@ -1,11 +1,18 @@
 // =============================================================================
 // App.tsx — Formulaire de pré-inscription (version sans MUI)
 // -----------------------------------------------------------------------------
-// La logique métier (validation, check-email, soumission) est inchangée.
 // Tout le visuel repose sur src/styles/fedasil.css (classes .btn, .field...).
 // Prérequis dans main.tsx :
 //   import "./styles/fedasil.css";
-//   (supprimer ThemeProvider, CssBaseline et tout import @mui/* / @emotion/*)
+//
+// CHECK-EMAIL ASSOUPLI (règles métier §5.2 et §5.3) :
+// Une adresse e-mail déjà connue dans Entra est un cas NORMAL :
+//   - familles partageant une seule adresse (plusieurs NN, un seul compte) ;
+//   - changement d'adresse e-mail (re-pré-inscription avec le NN) ;
+//   - compte supprimé puis ré-invité (récupération par le NN).
+// /api/check-email ne BLOQUE donc plus rien : il alimente seulement un avis
+// INFORMATIF et rassurant (bleu, jamais rouge) sous le champ e-mail.
+// Le champ « nom d'utilisateur » (jamais exploité par l'API) est supprimé.
 // =============================================================================
 
 import { useState, useEffect } from "react";
@@ -24,11 +31,19 @@ type FormData = {
   firstName: string;
   lastName: string;
   email: string;
-  username: string;
   contactLanguage: Language;
 };
 
 type FormErrors = Partial<Record<keyof FormData, string>>;
+
+// Avis informatif (jamais bloquant) quand l'adresse e-mail est déjà connue.
+// Ton volontairement rassurant : c'est un cas normal (familles, changement
+// d'adresse, réinscription), pas une erreur.
+const emailKnownLabels = {
+  fr: "Cette adresse e-mail est déjà connue chez nous. C'est normal si plusieurs membres de votre famille la partagent, si vous changez d'adresse ou si vous vous réinscrivez. Vous pouvez simplement continuer.",
+  nl: "Dit e-mailadres is al bij ons bekend. Dat is normaal als meerdere gezinsleden het delen, als u van adres verandert of als u zich opnieuw inschrijft. U kunt gewoon verdergaan.",
+  en: "This email address is already known to us. That's normal if several family members share it, if you changed your address, or if you are registering again. You can simply continue.",
+} as const;
 
 // Libellés propres au bandeau « déjà inscrit » (gardés ici pour ne pas
 // alourdir translations.ts — même approche que les labels de Portail.tsx).
@@ -162,7 +177,6 @@ export default function App() {
     firstName: "",
     lastName: "",
     email: "",
-    username: "",
     contactLanguage: language,
   });
 
@@ -178,8 +192,9 @@ export default function App() {
   const [submitting, setSubmitting] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
 
-  // true = l'utilisateur DOIT choisir un autre nom d'utilisateur (email déjà utilisé)
-  const [isUsernameEditable, setIsUsernameEditable] = useState(false);
+  // true = l'adresse e-mail saisie est déjà connue dans Entra (avis INFORMATIF
+  // uniquement : familles, changement d'adresse, réinscription — jamais bloquant).
+  const [emailKnown, setEmailKnown] = useState(false);
   const [checkingEmail, setCheckingEmail] = useState(false);
 
   const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -189,12 +204,7 @@ export default function App() {
       const next = { ...prev };
 
       if (name === "email") {
-        const cleanedEmail = value.trim().toLowerCase();
-        next.email = cleanedEmail;
-
-        if (!isUsernameEditable) {
-          next.username = cleanedEmail;
-        }
+        next.email = value.trim().toLowerCase();
       } else if (name === "contactLanguage") {
         next.contactLanguage = value as Language;
       } else {
@@ -203,6 +213,10 @@ export default function App() {
 
       return next;
     });
+
+    // L'avis « adresse déjà connue » ne vaut que pour l'adresse vérifiée :
+    // dès que l'adresse change, on le retire (re-vérification au prochain blur).
+    if (name === "email") setEmailKnown(false);
 
     setErrors((prev) => ({ ...prev, [name]: "" }));
     if (apiError) setApiError(null);
@@ -231,16 +245,15 @@ export default function App() {
       newErrors.email = t("errorEmailInvalid");
     }
 
-    if (isUsernameEditable && !formData.username.trim()) {
-      newErrors.username = t("errorUsernameRequired");
-    }
-
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
-  // Vérification côté API si l'email est déjà utilisé par un invité (inchangé)
-  const checkEmailAlreadyUsed = async (email: string) => {
+  // Vérification INFORMATIVE : l'adresse est-elle déjà connue dans Entra ?
+  // Ne bloque jamais rien et ne pose jamais d'erreur : une adresse connue est
+  // un cas normal (familles §5.2, changement d'adresse §5.3, réinscription §5.4).
+  // En cas d'échec réseau/API : silence (l'avis est un simple confort).
+  const checkEmailKnown = async (email: string) => {
     if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
       return;
     }
@@ -257,24 +270,7 @@ export default function App() {
       }
 
       const data = (await response.json()) as { exists: boolean };
-
-      if (data.exists) {
-        setIsUsernameEditable(true);
-        setErrors((prev) => ({
-          ...prev,
-          email: t("errorEmailAlreadyUsed"),
-        }));
-      } else {
-        setIsUsernameEditable(false);
-        setErrors((prev) => ({
-          ...prev,
-          email: "",
-        }));
-        setFormData((prev) => ({
-          ...prev,
-          username: prev.email,
-        }));
-      }
+      setEmailKnown(data.exists);
     } catch (err) {
       console.error("Erreur check-email:", err);
     } finally {
@@ -423,26 +419,21 @@ export default function App() {
               autoComplete="email"
               value={formData.email}
               onChange={handleChange}
-              onBlur={() => checkEmailAlreadyUsed(formData.email)}
+              onBlur={() => checkEmailKnown(formData.email)}
               error={errors.email || undefined}
               helper={checkingEmail ? t("checkingEmail") : t("emailHelper")}
             />
 
-            {/* Nom d'utilisateur semi-automatique (inchangé) */}
-            <Field
-              id="username"
-              name="username"
-              label={t("usernameLabel")}
-              value={formData.username}
-              onChange={handleChange}
-              disabled={!isUsernameEditable}
-              error={errors.username || undefined}
-              helper={
-                isUsernameEditable
-                  ? t("usernameHelperEditable")
-                  : t("usernameHelperLocked")
-              }
-            />
+            {/* Adresse déjà connue : avis rassurant, en bleu (jamais rouge),
+                qui n'empêche RIEN — la pré-inscription continue normalement. */}
+            {emailKnown && (
+              <div
+                className="alert alert-info email-known-notice"
+                role="status"
+              >
+                {emailKnownLabels[language]}
+              </div>
+            )}
 
             {/* Langue de contact */}
             <div>

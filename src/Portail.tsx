@@ -12,6 +12,16 @@
 //   3. « Paiements du trimestre » : à payer / déjà payé / reste à payer
 //      (l'information principale pour le résident)
 //   4. Bouton vers le trimestre précédent (/api/me?quarter=previous)
+//
+// FAMILLES (plusieurs personnes partagent une adresse e-mail = même compte
+// Microsoft = même oid, mais des FA différents) :
+//   - /api/me sans ?fa= renvoie { needsProfile: true, profiles: [...] }
+//     -> écran « Qui êtes-vous ? » (sélecteur de profil) ;
+//   - le FA choisi est propagé à TOUS les appels (?fa= sur /api/me, champ fa
+//     dans le corps de /api/declare) ; le serveur VÉRIFIE toujours que ce FA
+//     appartient bien à l'identité connectée (403 sinon) ;
+//   - une barre « Vous consultez le dossier de … » + bouton « Changer de
+//     personne » reste visible tant qu'il y a plusieurs profils.
 // =============================================================================
 
 import { useState, useEffect } from "react";
@@ -94,6 +104,12 @@ const labels = {
     error:
       "Vos informations n'ont pas pu être chargées pour le moment. Veuillez réessayer plus tard.",
     logout: "Se déconnecter",
+    profileTitle: "Qui êtes-vous ?",
+    profileIntro:
+      "Plusieurs personnes utilisent cette adresse e-mail. Choisissez votre profil pour voir vos informations.",
+    profileOpenAria: "Ouvrir le profil de",
+    profileViewing: "Vous consultez le dossier de",
+    profileChange: "Changer de personne",
   },
   nl: {
     welcome: "Welkom",
@@ -166,6 +182,12 @@ const labels = {
     error:
       "Uw gegevens konden momenteel niet worden geladen. Probeer het later opnieuw.",
     logout: "Afmelden",
+    profileTitle: "Wie bent u?",
+    profileIntro:
+      "Meerdere personen gebruiken dit e-mailadres. Kies uw profiel om uw gegevens te bekijken.",
+    profileOpenAria: "Profiel openen van",
+    profileViewing: "U bekijkt het dossier van",
+    profileChange: "Van persoon wisselen",
   },
   en: {
     welcome: "Welcome",
@@ -238,6 +260,12 @@ const labels = {
     error:
       "Your information could not be loaded right now. Please try again later.",
     logout: "Sign out",
+    profileTitle: "Who are you?",
+    profileIntro:
+      "Several people use this email address. Choose your profile to see your information.",
+    profileOpenAria: "Open the profile of",
+    profileViewing: "You are viewing the file of",
+    profileChange: "Switch person",
   },
 } as const;
 
@@ -257,13 +285,28 @@ type PaymentConfig = {
   beneficiary: string;
 };
 
+/** Un profil resident (une PERSONNE) lié au compte connecté.
+ *  Plusieurs profils = famille partageant la même adresse e-mail. */
+type Profile = {
+  fa: string;
+  firstName: string;
+  lastName: string;
+};
+
 type MeResponse = {
   quarter: number | null;
   months: MonthlyDeclaration[]; // trié du plus récent au plus ancien
   payment?: PaymentConfig | null;
+  profile?: Profile; // profil actif (renvoyé par /api/me)
+  profiles?: Profile[]; // présent uniquement s'il y a plusieurs profils
 };
 
-type Status = "loading" | "ready" | "nodata" | "error";
+/** Réponse brute de /api/me : soit des données, soit une demande de choix
+ *  de profil ({ needsProfile: true, profiles }) quand plusieurs personnes
+ *  partagent le compte et qu'aucun ?fa= n'a été fourni. */
+type MeRaw = MeResponse & { needsProfile?: boolean };
+
+type Status = "loading" | "chooseProfile" | "ready" | "nodata" | "error";
 type PrevStatus = "idle" | "loading" | "ready" | "error";
 
 // --- Formatage (mois et montants, selon la langue de l'interface) ----------------
@@ -641,12 +684,16 @@ function DeclarationForm({
   onSubmitted,
   initial,
   onCancel,
+  fa,
 }: {
   month: number;
   lang: Language;
   onSubmitted: () => void;
   initial?: { gross: number | null; net: number | null };
   onCancel?: () => void;
+  /** FA du profil actif (familles). Null = un seul profil : le serveur
+   *  le résout seul. TOUJOURS vérifié côté serveur (jamais de confiance). */
+  fa?: string | null;
 }) {
   const t = labels[lang];
   const toInput = (v: number | null | undefined): string =>
@@ -691,6 +738,8 @@ function DeclarationForm({
           month,
           grossSalary: Math.round(totalGross * 100) / 100,
           netSalary: Math.round(totalNet * 100) / 100,
+          // Familles : profil actif, vérifié côté serveur (403 si non lié).
+          ...(fa ? { fa } : {}),
         }),
       });
       if (res.status === 400) {
@@ -847,10 +896,19 @@ export default function Portail() {
   const [prevStatus, setPrevStatus] = useState<PrevStatus>("idle");
   const [previous, setPrevious] = useState<MeResponse | null>(null);
 
+  // --- Familles : plusieurs profils sur un même compte -----------------------
+  // profiles : la liste des personnes liées au compte (null = pas encore su).
+  // activeFa : le FA du profil choisi (null = un seul profil, résolu serveur).
+  const [profiles, setProfiles] = useState<Profile[] | null>(null);
+  const [activeFa, setActiveFa] = useState<string | null>(null);
+
   // Charge (ou recharge) les données du trimestre en cours.
-  const loadCurrent = async () => {
+  // fa = profil actif à demander ; null = laisser le serveur décider
+  // (un seul profil) ou renvoyer needsProfile (plusieurs profils).
+  const loadCurrent = async (fa: string | null) => {
     try {
-      const res = await fetch("/api/me");
+      const url = fa ? `/api/me?fa=${encodeURIComponent(fa)}` : "/api/me";
+      const res = await fetch(url);
       if (res.status === 404) {
         setStatus("nodata");
         return;
@@ -859,7 +917,21 @@ export default function Portail() {
         setStatus("error");
         return;
       }
-      const json = (await res.json()) as MeResponse;
+      const json = (await res.json()) as MeRaw;
+
+      // Plusieurs personnes sur ce compte et aucun profil choisi
+      // -> écran « Qui êtes-vous ? ».
+      if (json.needsProfile && json.profiles && json.profiles.length > 0) {
+        setProfiles(json.profiles);
+        setStatus("chooseProfile");
+        return;
+      }
+
+      // Mémorise la liste des profils (permet « Changer de personne »).
+      if (json.profiles && json.profiles.length > 1) {
+        setProfiles(json.profiles);
+      }
+
       setCurrent(json);
       setSelectedMonth(json.months[0]?.month ?? null);
       setEditingMonth(null);
@@ -867,6 +939,26 @@ export default function Portail() {
     } catch {
       setStatus("error");
     }
+  };
+
+  // Choix d'un profil dans le sélecteur : devient le profil ACTIF pour tous
+  // les appels suivants (consultation, trimestre précédent, déclaration).
+  const chooseProfile = (fa: string) => {
+    setActiveFa(fa);
+    // Le cache du trimestre précédent appartient à l'ANCIEN profil : on le vide.
+    setPrevious(null);
+    setPrevStatus("idle");
+    setView("current");
+    setStatus("loading");
+    void loadCurrent(fa);
+  };
+
+  // Retour à l'écran de choix (bouton « Changer de personne »).
+  const changeProfile = () => {
+    setEditingMonth(null);
+    setSelectedMonth(null);
+    setView("current");
+    setStatus("chooseProfile");
   };
 
   useEffect(() => {
@@ -887,8 +979,10 @@ export default function Portail() {
           return;
         }
 
-        // 2) Récupérer SES données (filtrage fait côté serveur)
-        if (!cancelled) await loadCurrent();
+        // 2) Récupérer SES données (filtrage fait côté serveur).
+        //    Premier appel SANS fa : le serveur répond soit avec les données
+        //    (un seul profil), soit avec needsProfile (famille).
+        if (!cancelled) await loadCurrent(null);
       } catch {
         if (!cancelled) setStatus("error");
       }
@@ -900,13 +994,17 @@ export default function Portail() {
     };
   }, []);
 
-  // Bascule vers le trimestre précédent (chargé une seule fois).
+  // Bascule vers le trimestre précédent (chargé une seule fois PAR profil :
+  // le cache est vidé à chaque changement de personne).
   const showPrevious = async () => {
     setView("previous");
     if (prevStatus !== "idle") return;
     setPrevStatus("loading");
     try {
-      const res = await fetch("/api/me?quarter=previous");
+      const url = activeFa
+        ? `/api/me?quarter=previous&fa=${encodeURIComponent(activeFa)}`
+        : "/api/me?quarter=previous";
+      const res = await fetch(url);
       if (!res.ok) {
         setPrevStatus("error");
         return;
@@ -979,7 +1077,12 @@ export default function Portail() {
       </header>
 
       <main className="page">
-        <h1 className="page-title">{t.welcome}</h1>
+        <h1 className="page-title">
+          {t.welcome}
+          {status === "ready" && current?.profile
+            ? ` ${current.profile.firstName}`
+            : ""}
+        </h1>
         <div className="title-accent" aria-hidden="true" />
         <p className="page-subtitle">{t.intro}</p>
 
@@ -988,6 +1091,56 @@ export default function Portail() {
             <CheckIcon />
             <span>{t.activated}</span>
           </div>
+
+          {/* Famille : rappel du profil consulté + changement de personne.
+              Visible dans les deux vues (trimestre en cours et précédent). */}
+          {status === "ready" &&
+            profiles &&
+            profiles.length > 1 &&
+            current?.profile && (
+              <div className="profile-bar">
+                <span className="profile-bar-text">
+                  {t.profileViewing}{" "}
+                  <strong>
+                    {current.profile.firstName} {current.profile.lastName}
+                  </strong>
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  onClick={changeProfile}
+                >
+                  {t.profileChange}
+                </button>
+              </div>
+            )}
+
+          {/* ---------- Vue : choix du profil (familles) ---------- */}
+          {status === "chooseProfile" && profiles && (
+            <>
+              <h2 className="portal-section-title">{t.profileTitle}</h2>
+              <p className="month-caption">{t.profileIntro}</p>
+              <div className="profile-select">
+                {profiles.map((p) => (
+                  <button
+                    key={p.fa}
+                    type="button"
+                    className="profile-option"
+                    aria-label={`${t.profileOpenAria} ${p.firstName} ${p.lastName}`}
+                    onClick={() => chooseProfile(p.fa)}
+                  >
+                    <span className="profile-name">
+                      {p.firstName} {p.lastName}
+                    </span>
+                    <span className="profile-fa">{p.fa}</span>
+                    <span className="profile-arrow" aria-hidden="true">
+                      ›
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
 
           {status === "loading" && (
             <div className="loading-row" role="status">
@@ -1031,7 +1184,8 @@ export default function Portail() {
                         key={selectedMonth}
                         month={selectedMonth}
                         lang={language}
-                        onSubmitted={loadCurrent}
+                        onSubmitted={() => loadCurrent(activeFa)}
+                        fa={activeFa}
                       />
                     </>
                   ) : displayed && editingMonth === displayed.month ? (
@@ -1044,12 +1198,13 @@ export default function Portail() {
                         key={`edit-${displayed.month}`}
                         month={displayed.month}
                         lang={language}
-                        onSubmitted={loadCurrent}
+                        onSubmitted={() => loadCurrent(activeFa)}
                         initial={{
                           gross: displayed.grossSalary,
                           net: displayed.netSalary,
                         }}
                         onCancel={() => setEditingMonth(null)}
+                        fa={activeFa}
                       />
                     </>
                   ) : (

@@ -891,3 +891,81 @@ button.quarter-row:hover {
   }
 }
 
+/* --- 14. Portail : profils familiaux (sélecteur + barre de profil) ----------- */
+
+/* Écran « Qui êtes-vous ? » : une grande zone tactile par personne.
+   Interaction = violet (charte) ; jamais de rouge (rien d'alarmant ici). */
+.profile-select {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.profile-option {
+  font: inherit;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px; /* zone tactile généreuse, public vulnérable */
+  padding: 14px 16px;
+  background: var(--blanc);
+  border: 1.5px solid var(--violet-25);
+  border-radius: var(--radius);
+  color: var(--gris-fonce);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.profile-option:hover {
+  border-color: var(--violet);
+  background: var(--violet-8);
+}
+
+.profile-option .profile-name {
+  font-weight: 600;
+  flex: 1;
+}
+
+/* Le FA aide à distinguer deux personnes au même nom ; discret. */
+.profile-option .profile-fa {
+  font-size: 0.8rem;
+  color: var(--gris);
+}
+
+.profile-option .profile-arrow {
+  color: var(--violet);
+  font-size: 1.3rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+/* Barre « Vous consultez le dossier de … » + bouton « Changer de personne ».
+   Toujours visible quand plusieurs profils existent : personne ne doit
+   déclarer des revenus sur le dossier de quelqu'un d'autre par mégarde. */
+.profile-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--violet-8);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin-bottom: 20px;
+  font-size: 0.95rem;
+}
+
+.profile-bar .profile-bar-text strong {
+  color: var(--violet);
+}
+
+/* --- 15. Pré-inscription : avis « adresse e-mail déjà connue » ---------------- */
+
+/* Avis informatif sous le champ e-mail : réutilise .alert-info (bleu),
+   mais sans la marge basse (la grille .form gère déjà l'espacement). */
+.form .email-known-notice {
+  margin: -8px 0 0;
+  font-size: 0.9rem;
+}
