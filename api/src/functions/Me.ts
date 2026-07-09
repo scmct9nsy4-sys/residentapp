@@ -8,35 +8,42 @@ import {
 // ============================================================================
 //  /api/me  —  Déclarations mensuelles du résident CONNECTÉ uniquement
 // ----------------------------------------------------------------------------
-//  Recherche en DEUX temps (sécurisée, côté serveur) :
-//    1) e-mail connecté  -> FedasilNumber   (liste "resident")
-//    2) FedasilNumber     -> TOUTES les lignes du trimestre (liste KB-Cumul),
-//       triées par mois décroissant (la plus récente en premier).
+//  RÉSOLUTION D'IDENTITÉ (nouvelle, robuste) :
+//    1) oid du jeton (claim objectidentifier, disponible grâce à l'auth
+//       personnalisée SWA) -> lignes de la liste "resident" (EntraOid).
+//    2) REPLI transitoire : si aucun oid stocké ne correspond, matching par
+//       e-mail — UNIQUEMENT si l'e-mail correspond à EXACTEMENT UNE ligne
+//       (jamais en cas d'ambiguïté familiale). En cas de succès, l'oid est
+//       écrit sur la ligne au passage (auto-réparation, non bloquant).
 //
-//  Paramètre optionnel :  GET /api/me?quarter=previous
-//    -> interroge la liste du trimestre précédent (SP_CUMUL_PREV_LIST_NAME).
-//    Toute autre valeur (ou absence) = trimestre en cours.
+//  FAMILLES (plusieurs personnes partagent le même e-mail = même compte
+//  invité = même oid, mais des FA différents) :
+//    - plusieurs lignes trouvées SANS paramètre fa
+//        -> 200 { needsProfile: true, profiles: [{fa, firstName, lastName}] }
+//        (le frontend affiche un sélecteur de profil)
+//    - GET /api/me?fa=FA00655210 : le serveur VÉRIFIE que ce FA appartient
+//      aux lignes liées à l'identité authentifiée (sinon 403). Le navigateur
+//      ne choisit que parmi SES profils, jamais librement.
 //
-//  Réponse 200 :
+//  Paramètres optionnels :
+//    ?quarter=previous  -> liste du trimestre précédent (inchangé)
+//    ?fa=<FA>           -> profil actif (obligatoire si plusieurs profils)
+//
+//  Réponse 200 (profil résolu) :
 //    {
-//      quarter: 4 | 3 | null,      // n° du trimestre, déduit du nom de liste
-//      months: [                   // trié du mois le plus récent au plus ancien
-//        { month: 12, netSalary: 1540, grossSalary: 1540,
-//          contribution: 495, paid: null,
-//          structuredCom: "+++120/0655/21074+++" },
-//        ...
-//      ],
-//      payment: { iban, beneficiary } | null   // config de virement (env)
+//      quarter: 4 | 3 | null,
+//      months: [ { month, netSalary, grossSalary, contribution, paid,
+//                  structuredCom }, ... ],       // trié mois décroissant
+//      payment: { iban, beneficiary } | null,
+//      profile: { fa, firstName, lastName },     // profil actif
+//      profiles: [ ... ]                         // présent si plusieurs
 //    }
-//    months peut être vide (aucune déclaration, ou liste du trimestre
-//    précédent inexistante) : c'est au frontend d'afficher l'état adapté.
 //
 //  Sécurité :
 //   - L'identité vient du jeton Static Web Apps (x-ms-client-principal),
 //     JAMAIS d'un paramètre du navigateur.
-//   - Le FedasilNumber est résolu ICI ; le navigateur ne choisit jamais
-//     quelles données il reçoit.
-//   - Aucune valeur sensible (montant, FedasilNumber) dans les logs.
+//   - Le FedasilNumber actif est résolu/contrôlé ICI.
+//   - Aucune valeur sensible (montant, FA, NN) dans les logs.
 // ============================================================================
 
 // --- Graph / SharePoint ---
@@ -50,9 +57,13 @@ const SP_SITE_PATH = process.env["SP_SITE_PATH"];
 // Étape 1 : liste "resident" (même liste que l'éligibilité) -> SP_LIST_ID
 const SP_RESIDENT_LIST_ID = process.env["SP_LIST_ID"];
 const SP_EMAIL_FIELD = process.env["SP_EMAIL_FIELD"] ?? "Email";
-// Nom INTERNE de la colonne FedasilNumber dans la liste resident
+// Noms INTERNES des colonnes de la liste resident
 const SP_RESIDENT_FA_FIELD =
   process.env["SP_RESIDENT_FA_FIELD"] ?? "FedasilNumber";
+const SP_RESIDENT_OID_FIELD =
+  process.env["SP_RESIDENT_OID_FIELD"] ?? "EntraOid";
+const SP_FIRSTNAME_FIELD = process.env["SP_FIRSTNAME_FIELD"] ?? "FirstName";
+const SP_LASTNAME_FIELD = process.env["SP_LASTNAME_FIELD"] ?? "LastName";
 
 // Étape 2 : listes KB-Cumul (une liste PAR trimestre)
 const SP_CUMUL_LIST_ID = process.env["SP_CUMUL_LIST_ID"];
@@ -83,6 +94,13 @@ const SP_FA_IS_NUMBER =
 const GENERIC_SERVER_ERROR =
   "Une erreur est survenue lors du chargement de vos informations.";
 
+// Cas famille sans liaison oid (plusieurs lignes pour un même e-mail, aucune
+// reliée) : impossible de savoir de qui il s'agit -> il faut refaire la
+// pré-inscription (avec le numéro national), qui écrit la liaison.
+const RELINK_REQUIRED_MESSAGE =
+  "Votre compte doit être relié à votre profil. " +
+  "Merci de refaire la pré-inscription avec votre numéro national.";
+
 // ---------- Types ----------
 
 type ClientPrincipal = {
@@ -90,6 +108,8 @@ type ClientPrincipal = {
   userId?: string;
   userDetails?: string;
   userRoles?: string[];
+  // Disponible avec l'auth personnalisée SWA (plan Standard).
+  claims?: Array<{ typ: string; val: string }>;
 };
 
 type MonthlyDeclaration = {
@@ -99,6 +119,13 @@ type MonthlyDeclaration = {
   contribution: number | null;
   paid: number | null;
   structuredCom: string | null; // communication structurée du virement (+++...+++)
+};
+
+type ResidentProfile = {
+  itemId: string; // ID de l'élément SharePoint (pour l'auto-réparation oid)
+  fa: string;
+  firstName: string;
+  lastName: string;
 };
 
 type SpFields = Record<string, unknown>;
@@ -122,6 +149,19 @@ function getClientPrincipal(request: HttpRequest): ClientPrincipal | null {
   } catch {
     return null;
   }
+}
+
+// Extrait l'oid Entra des claims du jeton (auth personnalisée uniquement ;
+// renvoie null en local avec le simulateur SWA -> repli e-mail).
+function getOid(principal: ClientPrincipal): string | null {
+  const claim = principal.claims?.find(
+    (c) =>
+      c.typ ===
+        "http://schemas.microsoft.com/identity/claims/objectidentifier" ||
+      c.typ === "oid"
+  );
+  const val = claim?.val?.trim() ?? "";
+  return val !== "" ? val : null;
 }
 
 // Convertit une valeur SharePoint (nombre, texte, vide) en nombre ou null.
@@ -214,27 +254,7 @@ function buildFilter(field: string, value: string, isNumber: boolean): string {
   return `fields/${field} eq '${value.replace(/'/g, "''")}'`;
 }
 
-// Renvoie les "fields" du premier élément correspondant (ou null).
-async function queryFirstItem(
-  siteId: string,
-  listId: string,
-  filterClause: string,
-  selectFields: string[],
-  token: string,
-  context: InvocationContext
-): Promise<SpFields | null> {
-  const items = await queryItems(
-    siteId,
-    listId,
-    filterClause,
-    selectFields,
-    token,
-    context
-  );
-  return items[0] ?? null;
-}
-
-// Renvoie les "fields" de TOUS les éléments correspondants.
+// Renvoie id + fields de TOUS les éléments correspondants.
 async function queryItems(
   siteId: string,
   listId: string,
@@ -242,7 +262,7 @@ async function queryItems(
   selectFields: string[],
   token: string,
   context: InvocationContext
-): Promise<SpFields[]> {
+): Promise<Array<{ id: string; fields: SpFields }>> {
   const url =
     `https://graph.microsoft.com/v1.0/sites/${siteId}/lists/${listId}` +
     `/items?$expand=fields($select=${selectFields.join(",")})` +
@@ -258,11 +278,148 @@ async function queryItems(
     throw new Error("Impossible de lire les données.");
   }
   const json = (await res.json()) as {
-    value?: Array<{ fields?: SpFields }>;
+    value?: Array<{ id?: string; fields?: SpFields }>;
   };
   return (json.value ?? [])
-    .map((it) => it.fields)
-    .filter((f): f is SpFields => Boolean(f));
+    .filter((it): it is { id: string; fields: SpFields } =>
+      Boolean(it.id && it.fields)
+    )
+    .map((it) => ({ id: it.id, fields: it.fields }));
+}
+
+// ---------- Résolution d'identité (liste resident) ----------
+
+function toProfile(item: { id: string; fields: SpFields }): ResidentProfile | null {
+  const fa = String(item.fields[SP_RESIDENT_FA_FIELD] ?? "").trim();
+  if (!fa) return null;
+  return {
+    itemId: item.id,
+    fa,
+    firstName: String(item.fields[SP_FIRSTNAME_FIELD] ?? "").trim(),
+    lastName: String(item.fields[SP_LASTNAME_FIELD] ?? "").trim(),
+  };
+}
+
+async function findResidentProfiles(
+  siteId: string,
+  filterClause: string,
+  token: string,
+  context: InvocationContext
+): Promise<ResidentProfile[]> {
+  const items = await queryItems(
+    siteId,
+    SP_RESIDENT_LIST_ID as string,
+    filterClause,
+    [SP_RESIDENT_FA_FIELD, SP_FIRSTNAME_FIELD, SP_LASTNAME_FIELD],
+    token,
+    context
+  );
+  return items
+    .map(toProfile)
+    .filter((p): p is ResidentProfile => p !== null);
+}
+
+// Auto-réparation : écrit l'oid sur la ligne resident lorsque le matching a
+// dû passer par le repli e-mail. NON BLOQUANT.
+async function writeOidOnResident(
+  siteId: string,
+  itemId: string,
+  oid: string,
+  token: string,
+  context: InvocationContext
+): Promise<void> {
+  try {
+    const res = await fetch(
+      `https://graph.microsoft.com/v1.0/sites/${siteId}/lists/${SP_RESIDENT_LIST_ID}/items/${itemId}/fields`,
+      {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ [SP_RESIDENT_OID_FIELD]: oid }),
+      }
+    );
+    context.log(
+      res.ok
+        ? "Auto-réparation : oid écrit sur la ligne resident."
+        : `Auto-réparation oid échouée (non bloquant), statut: ${res.status}`
+    );
+  } catch (error) {
+    context.log("Auto-réparation oid : exception (non bloquant):", error);
+  }
+}
+
+// Résout les profils du compte connecté : oid d'abord, repli e-mail unique.
+// Renvoie { profiles } ou { error } (réponse HTTP prête à renvoyer).
+async function resolveProfiles(
+  oid: string | null,
+  email: string,
+  siteId: string,
+  token: string,
+  context: InvocationContext
+): Promise<
+  { profiles: ResidentProfile[] } | { error: HttpResponseInit }
+> {
+  let profiles: ResidentProfile[] = [];
+
+  // 1) Matching par oid (voie normale en production).
+  if (oid) {
+    profiles = await findResidentProfiles(
+      siteId,
+      buildFilter(SP_RESIDENT_OID_FIELD, oid, false),
+      token,
+      context
+    );
+    if (profiles.length > 0) {
+      context.log(`Identité résolue par oid (${profiles.length} profil(s)).`);
+      return { profiles };
+    }
+  }
+
+  // 2) Repli transitoire par e-mail — UNIQUEMENT si correspondance unique.
+  if (email) {
+    const byEmail = await findResidentProfiles(
+      siteId,
+      buildFilter(SP_EMAIL_FIELD, email, false),
+      token,
+      context
+    );
+    if (byEmail.length === 1) {
+      context.log("Identité résolue par e-mail (repli, correspondance unique).");
+      // Auto-réparation : au fil des connexions, tout le monde migre vers l'oid.
+      if (oid) {
+        await writeOidOnResident(
+          siteId,
+          byEmail[0].itemId,
+          oid,
+          token,
+          context
+        );
+      }
+      return { profiles: byEmail };
+    }
+    if (byEmail.length > 1) {
+      // Famille sans liaison oid : ambiguïté irrésoluble sans le NN.
+      context.log(
+        "E-mail partagé sans liaison oid : re-pré-inscription requise."
+      );
+      return {
+        error: {
+          status: 404,
+          jsonBody: { message: RELINK_REQUIRED_MESSAGE },
+        },
+      };
+    }
+  }
+
+  context.log("Aucun profil resident pour cette identité.");
+  return {
+    error: {
+      status: 404,
+      jsonBody: { message: "Aucune donnée trouvée pour ce compte." },
+    },
+  };
 }
 
 // ---------- Endpoint ----------
@@ -273,7 +430,12 @@ export async function Me(
 ): Promise<HttpResponseInit> {
   try {
     const principal = getClientPrincipal(request);
-    if (!principal || !principal.userDetails) {
+    if (!principal) {
+      return { status: 401, jsonBody: { message: "Non authentifié." } };
+    }
+    const oid = getOid(principal);
+    const email = (principal.userDetails ?? "").trim().toLowerCase();
+    if (!oid && !email) {
       return { status: 401, jsonBody: { message: "Non authentifié." } };
     }
     if (!SP_RESIDENT_LIST_ID) {
@@ -281,39 +443,47 @@ export async function Me(
       return { status: 500, jsonBody: { message: GENERIC_SERVER_ERROR } };
     }
 
-    // Paramètre strictement borné : tout sauf "previous" = trimestre en cours.
+    // Paramètres strictement bornés.
     const wantPrevious = request.query.get("quarter") === "previous";
+    const faParam = (request.query.get("fa") ?? "").trim();
 
-    const email = principal.userDetails.trim().toLowerCase();
     context.log(
-      `Requête /api/me pour: ${maskEmail(email)} (quarter=${
-        wantPrevious ? "previous" : "current"
-      })`
+      `Requête /api/me pour: ${maskEmail(email)} (oid=${
+        oid ? "présent" : "absent"
+      }, quarter=${wantPrevious ? "previous" : "current"})`
     );
 
     const token = await getGraphToken(context);
     const siteId = await getSiteId(token, context);
 
-    // --- Étape 1 : e-mail -> FedasilNumber (liste resident) ---
-    const residentFields = await queryFirstItem(
-      siteId,
-      SP_RESIDENT_LIST_ID,
-      buildFilter(SP_EMAIL_FIELD, email, false),
-      [SP_RESIDENT_FA_FIELD],
-      token,
-      context
-    );
-    const fedasilNumber = residentFields
-      ? String(residentFields[SP_RESIDENT_FA_FIELD] ?? "")
-      : "";
+    // --- Étape 1 : identité -> profil(s) resident ---
+    const resolved = await resolveProfiles(oid, email, siteId, token, context);
+    if ("error" in resolved) return resolved.error;
+    const profiles = resolved.profiles;
 
-    if (!fedasilNumber) {
-      context.log("Aucun FedasilNumber pour", maskEmail(email));
+    const publicProfiles = profiles.map(({ fa, firstName, lastName }) => ({
+      fa,
+      firstName,
+      lastName,
+    }));
+
+    // Plusieurs profils (famille) sans choix explicite -> sélecteur côté front.
+    if (profiles.length > 1 && !faParam) {
       return {
-        status: 404,
-        jsonBody: { message: "Aucune donnée trouvée pour ce compte." },
+        status: 200,
+        jsonBody: { needsProfile: true, profiles: publicProfiles },
       };
     }
+
+    // Profil actif : le fa demandé DOIT appartenir aux profils de l'identité.
+    const active = faParam
+      ? profiles.find((p) => p.fa === faParam)
+      : profiles[0];
+    if (!active) {
+      context.log("Paramètre fa refusé (profil non lié à cette identité).");
+      return { status: 403, jsonBody: { message: "Profil non autorisé." } };
+    }
+    const fedasilNumber = active.fa;
 
     // --- Étape 2 : FedasilNumber -> déclarations du trimestre demandé ---
     const listName = wantPrevious ? SP_CUMUL_PREV_LIST_NAME : SP_CUMUL_LIST_NAME;
@@ -326,10 +496,25 @@ export async function Me(
       cumulListId = await findListIdByName(siteId, listName, token, context);
     }
 
+    const profileBlock = {
+      fa: active.fa,
+      firstName: active.firstName,
+      lastName: active.lastName,
+    };
+    const profilesBlock = profiles.length > 1 ? publicProfiles : undefined;
+
     // Liste introuvable : réponse vide (le frontend affichera l'état adapté).
     if (!cumulListId) {
       context.log("Liste de trimestre introuvable (réponse vide).");
-      return { status: 200, jsonBody: { quarter, months: [] } };
+      return {
+        status: 200,
+        jsonBody: {
+          quarter,
+          months: [],
+          profile: profileBlock,
+          profiles: profilesBlock,
+        },
+      };
     }
 
     const rows = await queryItems(
@@ -351,7 +536,7 @@ export async function Me(
     // Une entrée par mois, triée du plus récent au plus ancien.
     // (En cas de doublon improbable sur un mois, la dernière ligne lue gagne.)
     const byMonth = new Map<number, MonthlyDeclaration>();
-    for (const f of rows) {
+    for (const { fields: f } of rows) {
       const month = toNumberOrNull(f[SP_MONTH_FIELD]);
       if (month === null) continue;
       const rawCom = f[SP_STRUCTCOM_FIELD];
@@ -376,7 +561,16 @@ export async function Me(
         ? { iban: PAYMENT_IBAN, beneficiary: PAYMENT_BENEFICIARY }
         : null;
 
-    return { status: 200, jsonBody: { quarter, months, payment } };
+    return {
+      status: 200,
+      jsonBody: {
+        quarter,
+        months,
+        payment,
+        profile: profileBlock,
+        profiles: profilesBlock,
+      },
+    };
   } catch (error) {
     context.log("Erreur dans /api/me:", error);
     return { status: 500, jsonBody: { message: GENERIC_SERVER_ERROR } };

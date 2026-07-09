@@ -8,20 +8,29 @@ import {
 // ============================================================================
 //  POST /api/declare — Le résident CONNECTÉ déclare ses revenus d'un mois
 // ----------------------------------------------------------------------------
-//  Corps attendu : { month: 12, grossSalary: 1540, netSalary: 1540 }
+//  Corps attendu : { month: 12, grossSalary: 1540, netSalary: 1540, fa?: "FA..." }
+//    - fa est OBLIGATOIRE uniquement quand plusieurs profils sont liés au
+//      compte connecté (familles partageant un e-mail). Il est VÉRIFIÉ côté
+//      serveur : le fa doit appartenir aux profils de l'identité authentifiée.
+//
+//  RÉSOLUTION D'IDENTITÉ (identique à Me.ts — garder les deux synchronisées) :
+//    1) oid du jeton (claim objectidentifier) -> lignes resident (EntraOid)
+//    2) repli e-mail UNIQUEMENT si correspondance unique (+ auto-réparation :
+//       l'oid est écrit sur la ligne au passage)
 //
 //  Principes de sécurité :
 //   - L'identité vient du jeton Static Web Apps (x-ms-client-principal).
-//   - Le FedasilNumber est résolu côté serveur (e-mail -> liste resident).
+//   - Le FedasilNumber actif est résolu/contrôlé côté serveur.
 //   - La CONTRIBUTION est TOUJOURS recalculée ici (jamais reçue du client).
 //   - La communication structurée est générée ici (mois + FA + modulo 97).
-//   - Le mois doit appartenir au trimestre en cours et ne pas être déjà déclaré.
+//   - Le mois doit appartenir au trimestre en cours.
 //
 //  Règle métier : si le mois est déjà déclaré, la requête CORRIGE la ligne
 //  existante (nouveaux totaux, contribution recalculée, Paid inchangé).
 //
-//  Réponses : 201 créé · 200 corrigé · 400 montants/mois invalides ·
-//             401 non authentifié · 404 compte non lié · 500 erreur générique
+//  Réponses : 201 créé · 200 corrigé · 400 montants/mois/profil invalides ·
+//             401 non authentifié · 403 profil non autorisé ·
+//             404 compte non lié · 500 erreur générique
 // ============================================================================
 
 const TENANT_ID = process.env["TENANT_ID"];
@@ -35,6 +44,10 @@ const SP_RESIDENT_LIST_ID = process.env["SP_LIST_ID"];
 const SP_EMAIL_FIELD = process.env["SP_EMAIL_FIELD"] ?? "Email";
 const SP_RESIDENT_FA_FIELD =
   process.env["SP_RESIDENT_FA_FIELD"] ?? "FedasilNumber";
+const SP_RESIDENT_OID_FIELD =
+  process.env["SP_RESIDENT_OID_FIELD"] ?? "EntraOid";
+const SP_FIRSTNAME_FIELD = process.env["SP_FIRSTNAME_FIELD"] ?? "FirstName";
+const SP_LASTNAME_FIELD = process.env["SP_LASTNAME_FIELD"] ?? "LastName";
 
 const SP_CUMUL_LIST_ID = process.env["SP_CUMUL_LIST_ID"];
 const SP_CUMUL_LIST_NAME = process.env["SP_CUMUL_LIST_NAME"] ?? "KB-Cumul T4";
@@ -52,6 +65,10 @@ const SP_FA_IS_NUMBER =
 
 const GENERIC_SERVER_ERROR =
   "Une erreur est survenue lors de l'envoi de votre déclaration.";
+
+const RELINK_REQUIRED_MESSAGE =
+  "Votre compte doit être relié à votre profil. " +
+  "Merci de refaire la pré-inscription avec votre numéro national.";
 
 // Plafond de vraisemblance des montants saisis (garde-fou anti-erreur/abus)
 const MAX_AMOUNT = 100000;
@@ -82,8 +99,18 @@ function buildStructuredCom(fedasilNumber: string, month: number): string {
 
 // ---------- Helpers (mêmes conventions que Me.ts) ----------
 
-type ClientPrincipal = { userDetails?: string };
+type ClientPrincipal = {
+  userDetails?: string;
+  claims?: Array<{ typ: string; val: string }>;
+};
 type SpFields = Record<string, unknown>;
+
+type ResidentProfile = {
+  itemId: string;
+  fa: string;
+  firstName: string;
+  lastName: string;
+};
 
 function maskEmail(email?: string): string {
   if (!email) return "(absent)";
@@ -102,6 +129,19 @@ function getClientPrincipal(request: HttpRequest): ClientPrincipal | null {
   } catch {
     return null;
   }
+}
+
+// Extrait l'oid Entra des claims du jeton (auth personnalisée uniquement ;
+// renvoie null en local avec le simulateur SWA -> repli e-mail).
+function getOid(principal: ClientPrincipal): string | null {
+  const claim = principal.claims?.find(
+    (c) =>
+      c.typ ===
+        "http://schemas.microsoft.com/identity/claims/objectidentifier" ||
+      c.typ === "oid"
+  );
+  const val = claim?.val?.trim() ?? "";
+  return val !== "" ? val : null;
 }
 
 function quarterFromListName(name: string): number | null {
@@ -212,6 +252,133 @@ async function queryItems(
     .map((it) => ({ id: it.id, fields: it.fields }));
 }
 
+// ---------- Résolution d'identité (identique à Me.ts) ----------
+
+function toProfile(item: { id: string; fields: SpFields }): ResidentProfile | null {
+  const fa = String(item.fields[SP_RESIDENT_FA_FIELD] ?? "").trim();
+  if (!fa) return null;
+  return {
+    itemId: item.id,
+    fa,
+    firstName: String(item.fields[SP_FIRSTNAME_FIELD] ?? "").trim(),
+    lastName: String(item.fields[SP_LASTNAME_FIELD] ?? "").trim(),
+  };
+}
+
+async function findResidentProfiles(
+  siteId: string,
+  filterClause: string,
+  token: string,
+  context: InvocationContext
+): Promise<ResidentProfile[]> {
+  const items = await queryItems(
+    siteId,
+    SP_RESIDENT_LIST_ID as string,
+    filterClause,
+    [SP_RESIDENT_FA_FIELD, SP_FIRSTNAME_FIELD, SP_LASTNAME_FIELD],
+    token,
+    context
+  );
+  return items
+    .map(toProfile)
+    .filter((p): p is ResidentProfile => p !== null);
+}
+
+async function writeOidOnResident(
+  siteId: string,
+  itemId: string,
+  oid: string,
+  token: string,
+  context: InvocationContext
+): Promise<void> {
+  try {
+    const res = await fetch(
+      `https://graph.microsoft.com/v1.0/sites/${siteId}/lists/${SP_RESIDENT_LIST_ID}/items/${itemId}/fields`,
+      {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ [SP_RESIDENT_OID_FIELD]: oid }),
+      }
+    );
+    context.log(
+      res.ok
+        ? "Auto-réparation : oid écrit sur la ligne resident."
+        : `Auto-réparation oid échouée (non bloquant), statut: ${res.status}`
+    );
+  } catch (error) {
+    context.log("Auto-réparation oid : exception (non bloquant):", error);
+  }
+}
+
+async function resolveProfiles(
+  oid: string | null,
+  email: string,
+  siteId: string,
+  token: string,
+  context: InvocationContext
+): Promise<
+  { profiles: ResidentProfile[] } | { error: HttpResponseInit }
+> {
+  let profiles: ResidentProfile[] = [];
+
+  if (oid) {
+    profiles = await findResidentProfiles(
+      siteId,
+      buildFilter(SP_RESIDENT_OID_FIELD, oid, false),
+      token,
+      context
+    );
+    if (profiles.length > 0) {
+      context.log(`Identité résolue par oid (${profiles.length} profil(s)).`);
+      return { profiles };
+    }
+  }
+
+  if (email) {
+    const byEmail = await findResidentProfiles(
+      siteId,
+      buildFilter(SP_EMAIL_FIELD, email, false),
+      token,
+      context
+    );
+    if (byEmail.length === 1) {
+      context.log("Identité résolue par e-mail (repli, correspondance unique).");
+      if (oid) {
+        await writeOidOnResident(
+          siteId,
+          byEmail[0].itemId,
+          oid,
+          token,
+          context
+        );
+      }
+      return { profiles: byEmail };
+    }
+    if (byEmail.length > 1) {
+      context.log(
+        "E-mail partagé sans liaison oid : re-pré-inscription requise."
+      );
+      return {
+        error: {
+          status: 404,
+          jsonBody: { message: RELINK_REQUIRED_MESSAGE },
+        },
+      };
+    }
+  }
+
+  context.log("Aucun profil resident pour cette identité.");
+  return {
+    error: {
+      status: 404,
+      jsonBody: { message: "Aucune donnée trouvée pour ce compte." },
+    },
+  };
+}
+
 // Nettoie et valide un montant reçu du client.
 function sanitizeAmount(v: unknown): number | null {
   const n =
@@ -228,7 +395,12 @@ export async function Declare(
 ): Promise<HttpResponseInit> {
   try {
     const principal = getClientPrincipal(request);
-    if (!principal || !principal.userDetails) {
+    if (!principal) {
+      return { status: 401, jsonBody: { message: "Non authentifié." } };
+    }
+    const oid = getOid(principal);
+    const email = (principal.userDetails ?? "").trim().toLowerCase();
+    if (!oid && !email) {
       return { status: 401, jsonBody: { message: "Non authentifié." } };
     }
     if (!SP_RESIDENT_LIST_ID) {
@@ -237,7 +409,12 @@ export async function Declare(
     }
 
     // --- Validation du corps de requête ---
-    let body: { month?: unknown; grossSalary?: unknown; netSalary?: unknown };
+    let body: {
+      month?: unknown;
+      grossSalary?: unknown;
+      netSalary?: unknown;
+      fa?: unknown;
+    };
     try {
       body = (await request.json()) as typeof body;
     } catch {
@@ -247,6 +424,8 @@ export async function Declare(
     const month = Number(body.month);
     const gross = sanitizeAmount(body.grossSalary);
     const net = sanitizeAmount(body.netSalary);
+    const faRequested =
+      typeof body.fa === "string" ? body.fa.trim() : "";
 
     // Le mois doit être un des 3 mois du trimestre en cours.
     const quarter = quarterFromListName(SP_CUMUL_LIST_NAME);
@@ -264,31 +443,35 @@ export async function Declare(
       return { status: 400, jsonBody: { message: "Montants ou mois invalides." } };
     }
 
-    const email = principal.userDetails.trim().toLowerCase();
-    context.log(`Déclaration mois ${month} pour: ${maskEmail(email)}`);
+    context.log(`Déclaration mois ${month} pour: ${maskEmail(email)} (oid=${
+      oid ? "présent" : "absent"
+    })`);
 
     const token = await getGraphToken(context);
     const siteId = await getSiteId(token, context);
 
-    // --- E-mail -> FedasilNumber (jamais fourni par le client) ---
-    const residentRows = await queryItems(
-      siteId,
-      SP_RESIDENT_LIST_ID,
-      buildFilter(SP_EMAIL_FIELD, email, false),
-      [SP_RESIDENT_FA_FIELD],
-      token,
-      context
-    );
-    const fedasilNumber = residentRows[0]
-      ? String(residentRows[0].fields[SP_RESIDENT_FA_FIELD] ?? "")
-      : "";
+    // --- Identité -> profil(s) resident (jamais fourni librement par le client) ---
+    const resolved = await resolveProfiles(oid, email, siteId, token, context);
+    if ("error" in resolved) return resolved.error;
+    const profiles = resolved.profiles;
 
-    if (!fedasilNumber) {
+    // Profil actif : obligatoire et VÉRIFIÉ quand plusieurs profils existent.
+    let active: ResidentProfile | undefined;
+    if (faRequested) {
+      active = profiles.find((p) => p.fa === faRequested);
+      if (!active) {
+        context.log("Champ fa refusé (profil non lié à cette identité).");
+        return { status: 403, jsonBody: { message: "Profil non autorisé." } };
+      }
+    } else if (profiles.length === 1) {
+      active = profiles[0];
+    } else {
       return {
-        status: 404,
-        jsonBody: { message: "Aucune donnée trouvée pour ce compte." },
+        status: 400,
+        jsonBody: { message: "Profil manquant pour cette déclaration." },
       };
     }
+    const fedasilNumber = active.fa;
 
     // --- Liste du trimestre en cours ---
     let cumulListId: string | null = SP_CUMUL_LIST_ID ?? null;

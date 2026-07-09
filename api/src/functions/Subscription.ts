@@ -7,6 +7,34 @@ import {
 
 import { buildInvitationEmail } from "./invitationEmail";
 
+// ============================================================================
+//  POST /api/pre-inscription — Pré-inscription + invitation B2B
+// ----------------------------------------------------------------------------
+//  NOUVEAU (matching par oid) : après une invitation réussie, la ligne de la
+//  liste "resident" correspondant au NUMÉRO NATIONAL est mise à jour avec :
+//    - l'e-mail utilisé pour l'inscription (colonne SP_EMAIL_FIELD)
+//    - l'oid du compte invité Entra    (colonne SP_RESIDENT_OID_FIELD)
+//
+//  Ce mécanisme unique couvre trois cas métier :
+//    1. Première inscription        -> capture initiale de l'oid.
+//    2. Changement d'adresse e-mail -> le résident refait la pré-inscription
+//       avec son numéro national + sa NOUVELLE adresse ; la ligne (retrouvée
+//       par NN) reçoit le nouvel e-mail et le nouvel oid. Le FA ne change
+//       pas : l'historique est intact.
+//    3. Compte invité supprimé puis ré-invité -> même parcours, même effet.
+//       Le numéro national sert de clé de récupération.
+//
+//  Familles : plusieurs personnes (NN différents) peuvent partager la même
+//  adresse e-mail. L'invitation Graph est idempotente : le même e-mail
+//  renvoie le même invité (même oid). Chaque membre fait SA pré-inscription
+//  avec SON numéro national ; plusieurs lignes resident portent alors le
+//  même oid, et le portail propose un sélecteur de profil (voir Me.ts).
+//
+//  La liaison est NON BLOQUANTE : si l'écriture SharePoint échoue, la
+//  pré-inscription reste un succès (le compte invité existe déjà) ; le
+//  repli par e-mail unique dans Me.ts/Declare.ts prend alors le relais.
+// ============================================================================
+
 // ---------- Types ----------
 
 type PreInscriptionBody = {
@@ -16,11 +44,6 @@ type PreInscriptionBody = {
   email?: string;
   username?: string;
   contactLanguage?: string;
-};
-
-type EligibilityResult = {
-  eligible: boolean;
-  reason?: string;
 };
 
 type CreateUserResult = {
@@ -40,6 +63,12 @@ const SP_SITE_HOSTNAME = process.env["SP_SITE_HOSTNAME"];
 const SP_SITE_PATH = process.env["SP_SITE_PATH"];
 const SP_LIST_ID = process.env["SP_LIST_ID"];
 const SP_NATIONALID_FIELD = process.env["SP_NATIONALID_FIELD"] ?? "Title";
+
+// Colonnes de la liste resident mises à jour après invitation.
+// SP_RESIDENT_OID_FIELD = nom INTERNE de la colonne texte "EntraOid".
+const SP_EMAIL_FIELD = process.env["SP_EMAIL_FIELD"] ?? "Email";
+const SP_RESIDENT_OID_FIELD =
+  process.env["SP_RESIDENT_OID_FIELD"] ?? "EntraOid";
 
 // ⚠️ À MODIFIER POUR LA PRODUCTION ⚠️
 // INVITE_REDIRECT_URL = adresse où l'utilisateur est renvoyé après avoir
@@ -146,92 +175,6 @@ function isRateLimited(key: string, max: number, windowMs: number): boolean {
   return recent.length > max;
 }
 
-// ---------- Vérification d'éligibilité dans SharePoint ----------
-
-async function isNationalIdInSharePointList(
-  nationalId: string,
-  context: InvocationContext
-): Promise<boolean> {
-  if (!SP_SITE_HOSTNAME || !SP_SITE_PATH || !SP_LIST_ID) {
-    context.log(
-      "Configuration SharePoint manquante (SP_SITE_HOSTNAME/SP_SITE_PATH/SP_LIST_ID)."
-    );
-    throw new Error(
-      "Configuration SharePoint incomplète pour la vérification d'éligibilité."
-    );
-  }
-
-  const accessToken = await getGraphToken(context);
-
-  // 1) Récupérer l'id du site SharePoint
-  const siteUrl = `https://graph.microsoft.com/v1.0/sites/${SP_SITE_HOSTNAME}:/${SP_SITE_PATH}?$select=id`;
-  const siteResponse = await fetch(siteUrl, {
-    method: "GET",
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-
-  if (!siteResponse.ok) {
-    // On NE logge PAS le corps de réponse (peut contenir des infos sensibles).
-    context.log("Erreur récupération site SharePoint, statut:", siteResponse.status);
-    throw new Error(
-      `Impossible de récupérer le site SharePoint (statut ${siteResponse.status}).`
-    );
-  }
-
-  const siteJson = (await siteResponse.json()) as { id: string };
-  const siteId = siteJson.id;
-
-  // 2) Filtrer la liste. nationalId est déjà revalidé en amont (^\d{11}$),
-  // donc il ne contient que des chiffres : pas de risque d'injection OData.
-  // On conserve malgré tout l'échappement par sécurité.
-  const encodedNationalId = nationalId.replace(/'/g, "''");
-
-  const listItemsUrl =
-    `https://graph.microsoft.com/v1.0/sites/${siteId}/lists/${SP_LIST_ID}` +
-    `/items?$select=id&$expand=fields($select=${SP_NATIONALID_FIELD})` +
-    `&$filter=fields/${SP_NATIONALID_FIELD} eq '${encodedNationalId}'`;
-
-  const listResponse = await fetch(listItemsUrl, {
-    method: "GET",
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-
-  if (!listResponse.ok) {
-    // On NE logge PAS listText : il contiendrait des données d'éligibilité.
-    context.log(
-      "Erreur interrogation liste SharePoint, statut:",
-      listResponse.status
-    );
-    throw new Error(
-      `Impossible d'interroger la liste SharePoint (statut ${listResponse.status}).`
-    );
-  }
-
-  const listJson = (await listResponse.json()) as { value?: unknown[] };
-  const count = listJson.value?.length ?? 0;
-
-  // Log minimisé : on ne trace que le résultat booléen + un id masqué.
-  context.log(
-    `Vérification éligibilité pour ${maskNationalId(nationalId)} : ${
-      count > 0 ? "trouvé" : "non trouvé"
-    }`
-  );
-
-  return count > 0;
-}
-
-async function checkEligibility(
-  nationalId: string,
-  context: InvocationContext
-): Promise<EligibilityResult> {
-  const exists = await isNationalIdInSharePointList(nationalId, context);
-
-  if (!exists) {
-    return { eligible: false, reason: GENERIC_INELIGIBLE };
-  }
-  return { eligible: true };
-}
-
 // ---------- Authentification Microsoft Graph (client credentials) ----------
 
 async function getGraphToken(context: InvocationContext): Promise<string> {
@@ -269,6 +212,147 @@ async function getGraphToken(context: InvocationContext): Promise<string> {
 
   const json = (await response.json()) as { access_token: string };
   return json.access_token;
+}
+
+// ---------- SharePoint : site + liste resident ----------
+
+async function getSiteId(
+  token: string,
+  context: InvocationContext
+): Promise<string> {
+  if (!SP_SITE_HOSTNAME || !SP_SITE_PATH) {
+    context.log(
+      "Configuration SharePoint manquante (SP_SITE_HOSTNAME/SP_SITE_PATH)."
+    );
+    throw new Error("Configuration SharePoint incomplète (site).");
+  }
+  const url = `https://graph.microsoft.com/v1.0/sites/${SP_SITE_HOSTNAME}:/${SP_SITE_PATH}?$select=id`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    context.log("Erreur récupération site SharePoint, statut:", res.status);
+    throw new Error(
+      `Impossible de récupérer le site SharePoint (statut ${res.status}).`
+    );
+  }
+  return ((await res.json()) as { id: string }).id;
+}
+
+// Recherche la ligne resident par numéro national.
+// Renvoie l'ID de l'élément SharePoint (nécessaire pour la liaison e-mail/oid
+// après invitation), ou null si le numéro n'est pas dans la liste (inéligible).
+async function findResidentItemIdByNationalId(
+  nationalId: string,
+  token: string,
+  siteId: string,
+  context: InvocationContext
+): Promise<string | null> {
+  if (!SP_LIST_ID) {
+    context.log("Configuration SharePoint manquante (SP_LIST_ID).");
+    throw new Error(
+      "Configuration SharePoint incomplète pour la vérification d'éligibilité."
+    );
+  }
+
+  // nationalId est déjà revalidé en amont (^\d{11}$), donc il ne contient que
+  // des chiffres : pas de risque d'injection OData. On conserve malgré tout
+  // l'échappement par sécurité.
+  const encodedNationalId = nationalId.replace(/'/g, "''");
+
+  const listItemsUrl =
+    `https://graph.microsoft.com/v1.0/sites/${siteId}/lists/${SP_LIST_ID}` +
+    `/items?$select=id&$expand=fields($select=${SP_NATIONALID_FIELD})` +
+    `&$filter=fields/${SP_NATIONALID_FIELD} eq '${encodedNationalId}'`;
+
+  const listResponse = await fetch(listItemsUrl, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!listResponse.ok) {
+    // On NE logge PAS le corps : il contiendrait des données d'éligibilité.
+    context.log(
+      "Erreur interrogation liste SharePoint, statut:",
+      listResponse.status
+    );
+    throw new Error(
+      `Impossible d'interroger la liste SharePoint (statut ${listResponse.status}).`
+    );
+  }
+
+  const listJson = (await listResponse.json()) as {
+    value?: Array<{ id?: string }>;
+  };
+  const itemId = listJson.value?.[0]?.id ?? null;
+
+  // Log minimisé : on ne trace que le résultat booléen + un id masqué.
+  context.log(
+    `Vérification éligibilité pour ${maskNationalId(nationalId)} : ${
+      itemId ? "trouvé" : "non trouvé"
+    }`
+  );
+
+  return itemId;
+}
+
+// ---------- Liaison resident <-> compte invité (e-mail + oid) ----------
+// NON BLOQUANTE : un échec ici ne doit jamais faire échouer la pré-inscription
+// (le compte invité existe déjà côté Entra ; renvoyer une 500 créerait une
+// incohérence d'état). Le repli par e-mail unique de Me.ts/Declare.ts couvre
+// la période où l'oid manquerait.
+
+async function linkResidentToGuest(
+  residentItemId: string,
+  user: CreateUserResult,
+  token: string,
+  siteId: string,
+  context: InvocationContext
+): Promise<void> {
+  try {
+    if (!SP_LIST_ID) return;
+
+    const fieldsToWrite: Record<string, string> = {
+      [SP_EMAIL_FIELD]: user.email.trim().toLowerCase(),
+    };
+
+    // L'oid Entra est un GUID ; createExternalUser peut renvoyer un repli
+    // (userPrincipalName / "unknown") qu'on ne doit PAS écrire comme oid.
+    const looksLikeGuid =
+      /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(
+        user.id
+      );
+    if (looksLikeGuid) {
+      fieldsToWrite[SP_RESIDENT_OID_FIELD] = user.id;
+    } else {
+      context.log(
+        "Oid invité indisponible (id non-GUID) : liaison e-mail seule."
+      );
+    }
+
+    const res = await fetch(
+      `https://graph.microsoft.com/v1.0/sites/${siteId}/lists/${SP_LIST_ID}/items/${residentItemId}/fields`,
+      {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(fieldsToWrite),
+      }
+    );
+
+    if (!res.ok) {
+      context.log(
+        "Échec liaison resident/invité (non bloquant), statut:",
+        res.status
+      );
+      return;
+    }
+    context.log("Ligne resident reliée au compte invité (e-mail + oid).");
+  } catch (error) {
+    context.log("Exception liaison resident/invité (non bloquant):", error);
+  }
 }
 
 function requireInviteRedirectUrl(context: InvocationContext): string {
@@ -342,6 +426,8 @@ async function createExternalUser(
 
   const json = JSON.parse(text) as InvitationResponse;
 
+  // invitedUser.id = l'oid Entra du compte invité (identique à chaque
+  // ré-invitation du même e-mail : l'invitation Graph est idempotente).
   const id =
     json.invitedUser?.id ?? json.invitedUser?.userPrincipalName ?? "unknown";
 
@@ -454,6 +540,9 @@ async function guestExistsByEmail(
 // adresse existe). Il est ici protégé par une limitation de débit best-effort.
 // En production, envisager : limitation Front Door/APIM, CAPTCHA, ou
 // suppression au profit d'une vérification interne au flux de pré-inscription.
+// NOTE métier : une adresse déjà connue dans Entra n'est PAS une erreur
+// (familles partageant un e-mail, ré-inscription après changement d'adresse) —
+// le frontend ne doit pas bloquer la pré-inscription sur cette seule base.
 
 export async function CheckEmail(
   request: HttpRequest,
@@ -534,19 +623,36 @@ export async function Subscription(
       return { status: 400, jsonBody: { message: GENERIC_INELIGIBLE } };
     }
 
-    // 1. Éligibilité
-    const eligibility = await checkEligibility(nationalId, context);
-    if (!eligibility.eligible) {
-      return {
-        status: 400,
-        jsonBody: { message: eligibility.reason ?? GENERIC_INELIGIBLE },
-      };
+    // 1. Éligibilité : le NN doit exister dans la liste resident.
+    //    On récupère l'ID de l'élément pour la liaison e-mail/oid (étape 3).
+    const graphToken = await getGraphToken(context);
+    const siteId = await getSiteId(graphToken, context);
+    const residentItemId = await findResidentItemIdByNationalId(
+      nationalId,
+      graphToken,
+      siteId,
+      context
+    );
+    if (!residentItemId) {
+      return { status: 400, jsonBody: { message: GENERIC_INELIGIBLE } };
     }
 
     // 2. Invitation B2B (idempotente côté Graph : réinviter renvoie l'invité existant)
     const createdUser = await createExternalUser(body, context);
 
-    // 3. E-mail de confirmation (échec non bloquant)
+    // 3. Liaison resident <-> compte invité : e-mail + oid écrits sur la ligne
+    //    retrouvée par numéro national. Couvre inscription initiale,
+    //    changement d'e-mail et récupération après suppression de compte.
+    //    NON BLOQUANT en cas d'échec.
+    await linkResidentToGuest(
+      residentItemId,
+      createdUser,
+      graphToken,
+      siteId,
+      context
+    );
+
+    // 4. E-mail de confirmation (échec non bloquant)
     const emailSent = await sendConfirmationEmail(createdUser, body, context);
 
     return {
