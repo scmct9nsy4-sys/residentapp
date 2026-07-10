@@ -1,6 +1,6 @@
 # ÉTAT DU PROJET — ResidentApp (Fedasil)
 
-**Version 4 — 9 juillet 2026** (remplace la v3 du 9 juillet 2026)
+**Version 5 — 10 juillet 2026** (remplace la v4 du 9 juillet 2026)
 
 ---
 
@@ -19,9 +19,19 @@ aux résidents (public multilingue FR/NL/EN, invités via Entra B2B) de :
    de paie additionnées, contribution calculée automatiquement côté serveur).
 
 **Statut : parcours complet VALIDÉ EN PRODUCTION de bout en bout.**
-Depuis la v3, l'**authentification personnalisée Entra** et le **matching par
-`oid`** sont opérationnels en production (option 1 de l'ancienne feuille de
-route TERMINÉE), ainsi qu'un **provisioning déclaratif des listes SharePoint**.
+Depuis la v4 : le **sélecteur de profils familiaux** est implémenté et validé
+en production (le FA actif est propagé et vérifié serveur), la
+**pré-inscription est réduite au minimum** (NN + e-mail + langue ; prénom/nom
+lus depuis la liste resident), le **check-email est devenu informatif** (plus
+jamais bloquant), le cas **aidant** (assistante sociale) est couvert comme
+dérivé du cas famille avec un **garde-fou par liste d'adresses autorisées**
+(règle 5.13), les **comptes internes (membres du tenant)** sont pris en charge
+par liaison directe sans invitation B2B, la **bascule trimestrielle** est
+outillée (procédure + script `sp:rotate`), et le **modèle paiements** est
+documenté (liste KB-Paiements de test). Depuis la v3 : authentification
+personnalisée Entra, matching par `oid` et provisioning déclaratif SharePoint
+opérationnels. Migration SQL/Dataverse : analysée, **en attente de décision
+hiérarchique** (§10).
 
 ---
 
@@ -29,8 +39,8 @@ route TERMINÉE), ainsi qu'un **provisioning déclaratif des listes SharePoint**
 
 | Fichier | Rôle |
 |---|---|
-| `src/App.tsx` | Page publique : formulaire de pré-inscription + bandeau « Déjà inscrit ? » → /portail + avis post-déconnexion (démarches de déconnexion complète pour ordinateurs partagés, trilingue) |
-| `src/Portail.tsx` | Espace sécurisé : dernière déclaration en tuiles, carte du trimestre (mois cliquables, mois manquants déclarables via « + »), récapitulatif paiements (à payer / payé / reste), carte de paiement QR EPC, formulaire de déclaration/correction multi-fiches, bascule trimestre précédent. **⚠ Ne gère pas encore le sélecteur de profils familiaux** (voir §8) |
+| `src/App.tsx` | Page publique : formulaire de pré-inscription **minimal (NN + e-mail + langue de contact ; prénom/nom et « nom d'utilisateur » supprimés)** + avis informatif bleu « adresse déjà connue » (jamais bloquant) + bandeau « Déjà inscrit ? » → /portail + avis post-déconnexion (trilingue) |
+| `src/Portail.tsx` | Espace sécurisé : **sélecteur de profils familiaux** (écran « Qui êtes-vous ? » sur `needsProfile`, barre « Vous consultez le dossier de … » + « Changer de personne », FA actif propagé à /api/me et /api/declare), dernière déclaration en tuiles, carte du trimestre (mois cliquables, mois manquants déclarables via « + »), récapitulatif paiements, carte de paiement QR EPC, formulaire de déclaration/correction multi-fiches, bascule trimestre précédent (cache vidé au changement de personne) |
 | `src/styles/fedasil.css` | Design tokens charte Fedasil (violet #644391, rouge #d1103b, gris #676362) + sections 10-13 (trimestre, paiement, déclaration). Aucun style inline (CSP `style-src 'self'`) |
 | `src/main.tsx`, `src/i18n/*` | Inchangés. Libellés du portail locaux à `Portail.tsx` |
 | `public/staticwebapp.config.json` | **Emplacement critique : `public/`** (voir §9). Bloc `auth` (fournisseur AAD personnalisé), routes protégées `/api/me` et `/api/declare`, fallback SPA, en-têtes de sécurité + CSP durcie |
@@ -39,7 +49,7 @@ route TERMINÉE), ainsi qu'un **provisioning déclaratif des listes SharePoint**
 
 | Fonction | Route | Rôle |
 |---|---|---|
-| `Subscription.ts` | POST /api/pre-inscription | Pré-inscription + invitation B2B. **Nouveau v4 :** après invitation réussie, écrit e-mail + `oid` sur la ligne resident (retrouvée par numéro national). Endpoint `/check-email` conservé. |
+| `Subscription.ts` | POST /api/pre-inscription | Pré-inscription + invitation B2B. Après invitation réussie, écrit e-mail + `oid` sur la ligne resident (retrouvée par NN). **Nouveau v5 :** corps minimal `{ nationalId, email, contactLanguage }` ; **prénom/nom lus depuis la liste resident** (colonnes FirstName/LastName) pour le displayName de l'invitation et l'e-mail « Bonjour \<Prénom\> » — jamais renvoyés au navigateur (anti-oracle NN → nom). **Comptes internes (membres du tenant)** : détection par `findMemberByEmail` → liaison directe de l'oid SANS invitation (Graph la refuserait : domaine vérifié), e-mail avec lien vers le portail (`PORTAL_URL`) ; soumis au **garde-fou fail-closed** de la liste « ResidentApp Aidants » (lecture complète + comparaison normalisée, PAS de $filter — voir §11). Champs historiques (`firstName`, `lastName`, `username`) encore acceptés mais ignorés. Endpoint `/check-email` conservé (usage informatif côté front). |
 | `Me.ts` | GET /api/me | Identité → profil(s) resident → déclarations du trimestre triées mois décroissant. `?quarter=previous`, `?fa=<FA>` (profil actif, vérifié serveur). Bloc `payment`, `structuredCom` par mois. Renvoie `needsProfile` + `profiles` si plusieurs personnes sur un même compte. |
 | `Declare.ts` | POST /api/declare | Déclaration/correction : contribution recalculée serveur, communication structurée générée, mois limité au trimestre en cours, `Paid` préservé à la correction. Champ `fa` optionnel vérifié serveur (familles). |
 
@@ -116,14 +126,16 @@ e-mail**, pour des personnes différentes (NN différents). Conséquences :
   idempotente : le même e-mail renvoie le même invité, donc le même `oid`).
 - Plusieurs lignes de Residents List portent alors le **même oid**.
 - À la connexion, `/api/me` renvoie `needsProfile: true` + la liste des profils
-  (prénom/nom/FA). Le portail doit afficher un **sélecteur de profil**
-  (⚠ frontend pas encore implémenté — voir §8).
+  (prénom/nom/FA). Le portail affiche le **sélecteur de profil**
+  (implémenté depuis la v5 : écran « Qui êtes-vous ? », barre de profil actif,
+  « Changer de personne »).
 - Le profil choisi est passé aux appels via `?fa=` / champ `fa`, **toujours
   vérifié côté serveur** : le FA doit appartenir aux profils liés à l'oid
   authentifié (sinon 403). Le navigateur ne choisit que parmi SES profils.
 - Décision retenue : **pas de verrou par NN** à l'ouverture d'un profil
   (simple sélecteur). Les membres partageant une boîte reçoivent déjà les
   invitations les uns des autres.
+- Le même mécanisme couvre les **aidants** (assistantes sociales) — voir §5.13.
 
 ### 5.3 Changement d'adresse e-mail
 
@@ -223,43 +235,194 @@ remittance non structurée (reconnue par les apps belges, testé avec ING).
 ancienne (FIFO, convention belge à valider juridiquement). Idée retenue :
 préfixe réservé (ex. `9T0`) pour les communications d'apurement d'arriérés.
 
+### 5.13 Aidants (assistantes sociales) — dérivé du cas famille
+
+Un aidant (ex. assistante sociale en centre) s'inscrit avec **sa propre
+adresse e-mail** + le **NN de chaque résident aidé**, puis gère leurs
+déclarations depuis son compte via le sélecteur de profils. Aucun code
+spécifique : c'est exactement le mécanisme famille (§5.2).
+
+**RÈGLE FONDAMENTALE : un dossier resident = UN SEUL compte lié à la fois.**
+La ré-inscription par NN **TRANSFÈRE** l'accès (remplace e-mail + oid sur la
+ligne, §5.3) — elle ne le partage pas. Conséquences :
+
+- Si un résident avait son propre accès et qu'un aidant s'inscrit avec son
+  NN, le résident **perd** son accès (et inversement). C'est voulu : les
+  résidents aidés sont précisément ceux qui ne gèrent pas d'e-mail.
+- Si le résident reprend son autonomie, il refait simplement sa
+  pré-inscription (§5.3) et redevient le compte lié. Coût nul.
+- À former côté centres : *« s'inscrire avec le NN d'un résident = devenir
+  SON accès »*.
+- L'accès **simultané** résident + aidant n'est PAS supporté. **Chantier
+  futur consigné (§10) :** modèle de délégation — colonne « DelegateOid »
+  (ou liste « Delegates ») sur la liste resident, résolue par `Me.ts` /
+  `Declare.ts` en plus de `EntraOid`, avec sélecteur inchangé côté portail.
+- Point de vigilance : ce flux renforce le rôle du NN comme **seul secret
+  d'accès** → les durcissements `NN_CHECKSUM_STRICT=true`, rate limiting
+  robuste et CAPTCHA montent en priorité avant mise en service réelle.
+
+**Garde-fou (implémenté, validé en prod) :** liste SharePoint
+« **ResidentApp Aidants** » (colonne `Title` = adresse en minuscules,
+`Label` = documentation staff). Toute pré-inscription avec une adresse
+correspondant à un **membre interne du tenant** est refusée (403, message
+neutre) si l'adresse n'y figure pas — **fail-closed** : liste introuvable,
+vide ou erreur de lecture = refus. Gérée par le staff dans SharePoint, effet
+immédiat (aucun redéploiement). Ne restreint PAS les adresses externes
+(résidents/familles) : seule la voie « compte interne » est encadrée.
+
+**Comptes internes (membres @fedasil / du tenant) :** Graph REFUSE d'inviter
+une adresse d'un domaine vérifié du tenant. `Subscription.ts` détecte donc
+les membres AVANT d'inviter (`findMemberByEmail`) et **relie directement leur
+oid** à la ligne resident, sans invitation ; l'e-mail de confirmation
+contient un lien vers le portail (`PORTAL_URL`) au lieu d'un lien
+d'activation. Le portail (`Me.ts`/`Declare.ts`) ne fait aucune différence
+membre/invité (matching par oid). Bonus : les membres bénéficient des
+protections de l'organisation (MFA, accès conditionnel).
+
+**À valider par le business :** confidentialité intra-famille (simple
+sélecteur, pas de verrou), modèle de transfert pour les aidants, et
+encadrement de la pratique côté centres (qui figure dans la liste garde-fou,
+qui la maintient).
+
+### 5.14 Prénom / nom : jamais saisis, toujours lus dans la liste
+
+Le formulaire public ne demande plus ni prénom, ni nom, ni « nom
+d'utilisateur » (jamais exploité). Motifs : données **non vérifiables** au
+formulaire (fautes de frappe fréquentes, public parfois non scripteur) alors
+que la liste Residents (retrouvée par NN) contient les valeurs officielles.
+
+- `Subscription.ts` lit FirstName/LastName sur la ligne trouvée par NN et les
+  utilise pour le `invitedUserDisplayName` de l'invitation B2B et le
+  « Bonjour \<Prénom\> » de l'e-mail — lequel confirme au passage **quel
+  profil vient d'être activé** (utile familles et aidants).
+- Le nom n'est **jamais renvoyé au navigateur** après saisie du NN : ce
+  serait un oracle d'énumération NN → nom (cohérent avec `GENERIC_INELIGIBLE`).
+- Graph ne renomme pas un invité existant : le displayName Microsoft d'un
+  compte partagé reste celui du premier NN inscrit — cosmétique uniquement,
+  le portail identifie les personnes via le sélecteur de profils.
+
+### 5.15 Adresse e-mail déjà connue = cas normal
+
+`/api/check-email` n'est plus bloquant côté formulaire : une adresse déjà
+présente dans Entra est un cas **normal** (familles §5.2, aidants §5.13,
+changement d'adresse §5.3, réinscription §5.4). Le front affiche un avis
+**informatif bleu** rassurant (jamais rouge) et la pré-inscription continue.
+
+### 5.16 Calendrier de clôture trimestrielle
+
+Un trimestre reste **déclarable pendant 1 mois après sa fin** (exceptions
+rares sur justificatifs — processus staff à formaliser). La **bascule** a lieu
+le 1er du 2ᵉ mois suivant la fin du trimestre ; les chiffres bruts **BCSS**
+arrivent vers le **15** du même mois → phase de contrôle.
+
+| Trimestre | Déclarable jusqu'au | Bascule | Contrôle BCSS |
+|---|---|---|---|
+| T1 (janv-mars) | 30 avril | 1er mai | ~15 mai |
+| T2 (avril-juin) | 31 juillet | 1er août | ~15 août |
+| T3 (juil-sept) | 31 octobre | 1er novembre | ~15 novembre |
+| T4 (oct-déc) | 31 janvier N+1 | 1er février N+1 | ~15 février N+1 |
+
+**Point d'architecture clé :** le « trimestre courant » de l'application est
+le trimestre **en cours de déclaration** (décalé), PAS le trimestre
+calendaire. La bascule des variables `SP_CUMUL_LIST_NAME` / `SP_CUMUL_LIST_ID`
+/ `SP_CUMUL_PREV_LIST_NAME` (+ redéploiement) **EST** la clôture métier :
+c'est elle qui ferme les déclarations de l'ancien trimestre et ouvre le
+nouveau. Procédure outillée : `PROCEDURE-BASCULE-TRIMESTRE.md` +
+`npm run sp:rotate` (§7). Toute automatisation future doit encoder ce
+calendrier décalé.
+
+### 5.17 Paiements — modèle
+
+- **4 listes trimestrielles PERMANENTES** (KB-Cumul T1..T4) aux **ID fixes**,
+  réutilisées chaque année : à la bascule, la liste réutilisée est **archivée
+  puis vidée** (jamais recréée — les ID câblés en config ne changent jamais).
+- La colonne **`Paid` est un CUMUL** : un mois peut être payé en **plusieurs
+  virements** portant la même communication structurée (paiement en 3 fois,
+  etc.). Le portail gère nativement : le QR EPC affiche toujours le **reste
+  dû** (`contribution − payé`), avec la même communication.
+- Le **détail des virements** vit dans une liste paiements alimentée par un
+  **CSV bancaire hebdomadaire**. Aujourd'hui beaucoup de paiements ont une
+  communication libre (processus manuel historique) ; **objectif : 100 % de
+  communications structurées** grâce au QR — le ratio devient mesurable.
+- Liste **KB-Paiements** (structure de TEST, à réconcilier avec la liste
+  réelle Fedasil via `sp:inspect` à la reprise) : `Title` = référence bancaire
+  unique (clé d'**idempotence** des imports), `PaymentDate`, `Amount`,
+  `StructuredCom` / `FreeCom` (séparés : les libres = file du lettrage
+  manuel), `CounterpartyName/IBAN`, `FedasilNumber` + `Month` (résolus après
+  lettrage), `Status` (À traiter / Imputé / Anomalie).
+- **Lettrage cible** : lignes « À traiter » avec communication structurée
+  valide → décodage FA + mois (modulo 97 vérifiable) → addition dans `Paid` →
+  « Imputé ». Candidat idéal pour **Power Automate** (licences Premium
+  acquises). ⚠ Tant que la liste « Soldes » n'existe pas, les **impayés d'un
+  trimestre vidé ne survivent que dans l'archive** (voir procédure §4).
+
 ## 6. Données SharePoint
 
-Site : `giapplab.sharepoint.com/sites/Resident_Test`.
+Site : `giapplab.sharepoint.com/sites/Resident_Test` (tenant de TEST — à
+répliquer sur le tenant Fedasil ; ⚠ vérifier alors les **paramètres régionaux
+du site** : fuseau Bruxelles + locale fr-BE, le défaut SharePoint est le
+Pacifique américain, ce qui décale tous les affichages d'horodatage).
 
 - Liste **Residents List** (`SP_LIST_ID` = `5f8da123-127d-4bfc-81e3-df9b972093b4`) :
   colonnes `Title` (= NN), `FirstName`, `LastName`, `Email`, `FedasilNumber`,
   **`EntraOid`** (créée le 9/7 par provisioning), + autres (BirthDate,
   Nationality, Center, Language…). Noms internes propres (créés en anglais).
-- Listes **KB-Cumul T\*** (une par trimestre, année implicite — voir §8) :
-  `FedasilNumber`, `Month`, `NetSalary`, `GrossSalary`, `Contribution`, `Paid`,
-  `StructuredCom`, `StructuredText`.
+- Liste **ResidentApp Aidants** (`de89feb8-b98d-45c6-a2b0-cc1ba2134e11`) :
+  garde-fou des comptes internes (§5.13). `Title` = adresse autorisée en
+  minuscules, `Label` = documentation.
+- Listes **KB-Cumul T1..T4** (permanentes, ID fixes, année implicite — §5.16
+  et §5.17) : `FedasilNumber`, `Month`, `NetSalary`, `GrossSalary`,
+  `Contribution`, `Paid` (CUMUL), `StructuredCom`, `StructuredText`.
+  ID tenant de test : T1 `462efd7c-9555-4601-b83f-cba677c57867`,
+  T2 `cad4b15c-830a-4bdf-9e65-97b808a44787`,
+  T3 `050b3e3e-7567-4dbd-8447-fff7cc7fc10d`,
+  T4 `0894a6d7-55ff-4134-9b24-b489b8a998c9`.
+- Liste **KB-Paiements** (`f3726038-c1ec-4414-8c65-23791c5f8563`) : structure
+  de test du modèle paiements (§5.17) — à aligner sur la liste réelle Fedasil.
 - Contrôle trimestriel : brut BCSS (totaux trimestre) vs net déclaré ; net
   « vraisemblable » estimé via ratio Jobat. Recommandation : contrôle par
   exception (seuil d'écart).
 - **Recommandation structurante (non codée) :** liste permanente « Soldes »
   (FA, trimestre, dû, payé, statut, communication d'apurement) alimentée à la
   clôture de trimestre, pour que les impayés survivent à l'archivage.
-- Lettrage cible : extraits CODA → rapprochement automatique → alimente `Paid`
-  → base des **rappels automatiques** (par lots, validés par un humain).
+- Lettrage cible : import CSV bancaire → rapprochement automatique → alimente
+  `Paid` → base des **rappels automatiques** (par lots, validés par un humain).
+- NB d'ergonomie : les listes créées par API n'apparaissent PAS dans le menu
+  latéral du site — les ajouter au lancement rapide (paramètres de liste →
+  « Nom, description et navigation », ou édition du menu).
 
-## 7. Provisioning déclaratif des listes (« schéma comme code »)
+## 7. Provisioning déclaratif et exploitation des listes
 
-Nouveau outil v4 : la structure SharePoint est décrite dans le dépôt et
-appliquée en une commande.
+La structure SharePoint est décrite dans le dépôt et appliquée en une commande.
 
-- **`sharepoint-schema.json`** (racine) : décrit listes + colonnes voulues.
-  `documentOnly: true` = colonne existante (vérifiée, jamais créée).
+- **`sharepoint-schema.json`** (racine) : décrit les **7 listes** + colonnes
+  voulues (Residents List, ResidentApp Aidants, KB-Cumul T1..T4,
+  KB-Paiements). `documentOnly: true` = colonne existante (vérifiée, jamais
+  créée) ; les autres sont créées si absentes → le MÊME schéma vérifie le
+  tenant Fedasil et provisionne un tenant de test vierge.
 - **`scripts/provision-sharepoint.ts`** : script idempotent, ne supprime/modifie
   JAMAIS rien. Réutilise les identifiants Graph de `api/local.settings.json`.
+  Types gérés : text, note, number, dateTime, boolean, **choice** (validé le
+  9/7 : 37 créations dont la colonne `Status` à choix).
+- **`scripts/rotate-quarter.ts`** : bascule trimestrielle — **archive**
+  (JSON fidèle + CSV `;` pour Excel) TOUJOURS écrite AVANT le **vidage**,
+  confirmation en tapant `VIDER`, mode `--export-only`, reprise sur
+  limitation de débit Graph. ⚠ `archives/` contient des données personnelles
+  → **doit figurer dans `.gitignore`**.
+- **`PROCEDURE-BASCULE-TRIMESTRE.md`** (racine) : checklist d'exploitation
+  complète de la bascule (archivage → variables SWA → re-run du DERNIER
+  workflow → vérifications portail → local) + calendrier (§5.16) + tableau
+  des ID.
 - **`package.json`** :
   - `npm run sp:inspect` → rapport de l'état RÉEL (listes, colonnes, **noms
     internes**, types) — aucune écriture.
   - `npm run sp:provision` → applique le schéma (créations uniquement).
+  - `npm run sp:rotate -- T3 [2025] [--export-only]` → archivage/vidage.
 - Nécessite `tsx` (`npm i -D tsx`).
-- **A servi à créer la colonne `EntraOid`** sans manipulation manuelle.
-- Bénéfice futur : recréation des listes annuelles (option 2) et de la liste
-  « Soldes » (option 3) deviennent une commande.
+- **A servi à créer** la colonne `EntraOid`, puis (9/7) les listes Aidants,
+  T1-T3 et KB-Paiements sur le tenant de test.
+- Bénéfice futur : la liste « Soldes » (option 3) deviendra une entrée de
+  schéma + une commande.
 
 ## 8. Configuration (variables d'environnement)
 
@@ -275,16 +438,34 @@ Sur la SWA **et** dans `api/local.settings.json` (dev) :
 - SharePoint : `SP_SITE_HOSTNAME`, `SP_SITE_PATH`, `SP_LIST_ID`,
   `SP_EMAIL_FIELD`, `SP_RESIDENT_FA_FIELD`, **`SP_RESIDENT_OID_FIELD`
   (déf. `EntraOid`)**, **`SP_FIRSTNAME_FIELD` (déf. `FirstName`)**,
-  **`SP_LASTNAME_FIELD` (déf. `LastName`)**, `SP_CUMUL_LIST_ID`,
+  **`SP_LASTNAME_FIELD` (déf. `LastName`)** — utilisées par `Me.ts` ET, depuis
+  la v5, par `Subscription.ts` (noms officiels pour l'invitation), `SP_CUMUL_LIST_ID`,
   `SP_CUMUL_LIST_NAME` (déf. « KB-Cumul T4 »), `SP_CUMUL_PREV_LIST_NAME`
   (déf. « KB-Cumul T3 »), `SP_CUMUL_FA_FIELD`, `SP_MONTH_FIELD`, `SP_NET_FIELD`,
   `SP_GROSS_FIELD`, `SP_CONTRIB_FIELD`, `SP_PAID_FIELD`, `SP_STRUCTCOM_FIELD`,
   `SP_FA_IS_NUMBER`.
 - Paiement : `PAYMENT_IBAN`, `PAYMENT_BENEFICIARY` (⚠ IBAN de test personnel —
   à remplacer par l'IBAN Fedasil avant mise en service réelle).
+- **Garde-fou aidants (v5)** : `SP_STAFF_LIST_NAME` (déf. « ResidentApp
+  Aidants »), `SP_STAFF_LIST_ID` (optionnel, économise la résolution par nom
+  — tenant test : `de89feb8-b98d-45c6-a2b0-cc1ba2134e11`),
+  `SP_STAFF_EMAIL_FIELD` (déf. `Title`).
+- **Invitations / e-mails (v5)** : `INVITE_REDIRECT_URL` — ⚠ Graph refuse
+  http et localhost ; en local, repli `https://myapps.microsoft.com`.
+  **Recommandation : pointer directement sur `…/portail`** (l'invité activé
+  atterrit sur ses données, pas sur « Mes applications » Microsoft).
+  `PORTAL_URL` (optionnel) : lien du portail dans l'e-mail des MEMBRES
+  internes ; défaut intelligent déduit d'`INVITE_REDIRECT_URL` (reprise
+  telle quelle si elle finit déjà par `/portail`, sinon ajout du segment) —
+  à définir seulement si différent.
 - Local : `AzureWebJobsStorage: ""` (avertissement « unhealthy » bénin).
+  ⚠ `local.settings.json` est du JSON STRICT : une virgule manquante/en trop
+  empêche l'hôte Functions de démarrer (« Could not connect to :7071 » via
+  SWA CLI) — valider avec
+  `node -e "JSON.parse(require('fs').readFileSync('api/local.settings.json','utf8'))"`.
 
-Dépendances ajoutées : `qrcode` (+ `@types/qrcode`), `tsx` (dev, provisioning).
+Dépendances ajoutées : `qrcode` (+ `@types/qrcode`), `tsx` (dev, provisioning
+et rotation).
 
 ## 9. Entra / permissions
 
@@ -309,32 +490,77 @@ Dépendances ajoutées : `qrcode` (+ `@types/qrcode`), `tsx` (dev, provisioning)
 
 ## 10. Reste à faire (priorisé)
 
-1. **Sélecteur de profils familiaux** dans `Portail.tsx` : le backend gère déjà
-   `needsProfile`/`profiles` et le paramètre `fa` (vérifié serveur) ; le
-   frontend doit afficher le choix et propager le `fa` actif à `/api/declare`.
-   ⚠ **Ne pas créer de cas famille réel (2 lignes, même e-mail) avant.**
-   En profiter pour **assouplir `App.tsx`** : une adresse déjà connue dans Entra
-   est désormais un cas NORMAL (familles, changement d'e-mail) — ne pas bloquer
-   la pré-inscription sur `/check-email`.
-2. **Gouvernance de l'ANNÉE** (option 2) : `Month` sans année, listes sans
-   année. Décider : colonne année ou nommage « KB-Cumul 2026-T4 ». Impacte la
-   restriction « seul le mois précédent est déclarable ». Le provisioning (§7)
-   facilitera la recréation annuelle des listes.
-3. **Liste « Soldes »** (option 3) + processus rappels/lettrage CODA. Créable
-   via le schéma de provisioning.
+✅ **TERMINÉ (v5, validé en production)** : sélecteur de profils familiaux
+dans `Portail.tsx` (FA actif propagé et vérifié serveur) ; assouplissement de
+`App.tsx` (check-email informatif, formulaire minimal NN + e-mail + langue) ;
+prénom/nom lus depuis la liste resident dans `Subscription.ts` ; règle métier
+aidants (§5.13) ; **garde-fou « ResidentApp Aidants »** (fail-closed) ;
+**comptes internes** (liaison directe sans invitation) ; provisioning des
+7 listes sur le tenant de test ; outillage de **bascule trimestrielle**
+(procédure + `sp:rotate`).
+
+1. **Gouvernance de l'ANNÉE** : modèle confirmé = 4 listes permanentes à ID
+   fixes, archivées puis vidées à la bascule (§5.16-5.17). Reste : nommer les
+   archives avec l'année (fait par `sp:rotate`), et trancher l'ambiguïté
+   année de la communication structurée (virements tardifs → imputation
+   manuelle, §5.12).
+2. **Liste « Soldes »** (option 3) + processus rappels. Créable via le schéma
+   de provisioning. Point critique : les impayés d'un trimestre vidé ne
+   survivent aujourd'hui que dans l'archive (§5.17).
+3. **Lettrage des paiements** : import CSV bancaire hebdo → liste paiements →
+   imputation automatique des communications structurées dans `Paid`.
+   Candidat **Power Automate** (licences Premium acquises) ; structure de
+   test KB-Paiements prête (§5.17). Aligner d'abord le schéma sur la liste
+   réelle Fedasil (`sp:inspect` à la reprise).
 4. **Durcissements production :**
    - Remplacer `Sites.ReadWrite.All` + `Sites.FullControl.All` par
      **`Sites.Selected`** (contrôle limité au seul site ResidentApp) ;
    - IBAN Fedasil réel (remplacer l'IBAN de test) ;
-   - `NN_CHECKSUM_STRICT=true` ;
+   - `NN_CHECKSUM_STRICT=true` + rate limiting robuste + CAPTCHA — **priorité
+     RENFORCÉE** : depuis le formulaire minimal, le NN est le seul secret
+     d'accès (voir §5.13) ;
    - question « Rester connecté ? » (KMSI) sur postes partagés ;
    - suppression secret expiré éventuel ; nettoyage comptes invités orphelins ;
    - décision suppression du code `DEBUG_ERRORS` ;
    - évaluation managed identity.
 5. Design : logo officiel Fedasil (SVG), page d'accueil, parcours pas-à-pas.
-6. Connecter `invitationEmail.ts` (si pas déjà fait).
-7. Nettoyage données de test.
+6. **Variante d'e-mail pour les membres internes** dans `invitationEmail.ts`
+   (« votre accès est prêt, connectez-vous » au lieu du wording
+   « invitation ») — partager le fichier dans le projet Claude.
+7. Nettoyage données de test (personas NN, lignes de test des trimestres).
 8. Payconiq (alternative de paiement) à évaluer institutionnellement.
+9. **[DÉCISION HIÉRARCHIE] Migration base de données** : quitter SharePoint
+   pour **Azure SQL (recommandé)** ou Dataverse. Analyse du 10/7 :
+   - Azure SQL : coût infrastructure (qq €/mois), AUCUNE question de licence
+     par utilisateur externe, modèle relationnel qui règle année/Soldes/
+     détail des fiches de paie/lettrage, marche basse côté Functions
+     (l'architecture actuelle isole déjà l'accès aux données — le frontend
+     ne bouge pas) ;
+   - Dataverse : inclus dans les licences Power Apps Premium acquises
+     (~10 Go tenant + 250 Mo/licence), MAIS ⚠ **risque licensing pour les
+     utilisateurs EXTERNES** (résidents via portail custom = accès indirect /
+     multiplexing ; le véhicule Microsoft prévu est Power Pages, packs par
+     utilisateurs authentifiés) — **à faire vérifier par le revendeur
+     Microsoft** avant tout choix Dataverse ;
+   - Recommandation : SQL pour les données résidents, Power Apps/Automate
+     (connecteur SQL Premium, couvert par les licences) pour l'outillage
+     staff sur la MÊME base.
+10. **[CHANTIER CONSIGNÉ — non prioritaire] Modèle de délégation aidants** :
+    permettre l'accès SIMULTANÉ résident + aidant à un même dossier
+    (aujourd'hui la ré-inscription par NN TRANSFÈRE l'accès, §5.13). Piste
+    retenue : colonne `DelegateOid` (ou liste « Delegates » : FA, oid délégué,
+    rôle, échéance) sur/à côté de la liste resident, résolue par
+    `Me.ts`/`Declare.ts` EN PLUS de `EntraOid` (l'union des deux donne les
+    profils) ; sélecteur de profils inchangé côté portail. Créable via le
+    provisioning (§7). Questions à trancher le moment venu : qui
+    accorde/révoque la délégation (staff ?), échéance automatique, traçabilité
+    des déclarations faites par un délégué (colonne « DeclaredBy » ?).
+11. **Réplication sur le tenant Fedasil** (à la reprise) : `sp:inspect` puis
+    alignement du schéma (surtout la liste paiements réelle), `sp:provision`,
+    liste Aidants alimentée par le staff, variables SWA (dont
+    `INVITE_REDIRECT_URL` → `/portail`), **paramètres régionaux du site**
+    (fuseau Bruxelles + fr-BE — le défaut est le Pacifique), lancement rapide
+    du menu, et validation business des règles §5.2/§5.13.
 
 ## 11. Leçons de la session du 9/7 (option 1 + provisioning)
 
@@ -369,6 +595,54 @@ Dépendances ajoutées : `qrcode` (+ `@types/qrcode`), `tsx` (dev, provisioning)
   à la casse ; simulateur local sans oid → repli e-mail (colonne EntraOid ne se
   remplit qu'en production).
 
+**Ajouts session 2 du 9/7 (profils familiaux + formulaire minimal) :**
+
+- **Chercher les champs jamais exploités avant d'en simplifier la saisie** :
+  `username` était déclaré dans le type du body mais jamais lu ; prénom/nom ne
+  servaient qu'à des usages remplaçables par la liste resident. Un `grep` côté
+  API avant toute décision de formulaire.
+- **Ne jamais renvoyer le nom après saisie du NN** (oracle d'énumération
+  NN → nom) : la confirmation nominative passe par l'e-mail d'invitation.
+- **Graph ne renomme pas un invité existant** lors d'une ré-invitation
+  idempotente : le displayName reste celui de la première inscription.
+- **Le sélecteur famille n'est PAS testable en local** : le simulateur SWA ne
+  fournit pas d'oid, et le repli e-mail exige une correspondance UNIQUE (deux
+  lignes même e-mail en local → message « refaire la pré-inscription », comportement
+  prévu). Tester le cas famille/aidant uniquement en production.
+- **Changement de personne au portail = vider le cache du trimestre
+  précédent** (il appartient à l'ancien profil).
+- **Formulaire minimal ⇒ le NN devient l'unique secret d'accès** : durcissements
+  (`NN_CHECKSUM_STRICT`, rate limiting, CAPTCHA) en priorité renforcée.
+
+**Ajouts session 3 du 9-10/7 (garde-fou, comptes internes, exploitation) :**
+
+- **Préférer la lecture complète au `$filter` Graph pour les petites listes** :
+  le garde-fou filtré par `$filter=fields/... eq` refusait à tort (indexation
+  de colonne, casse, espaces) ; lire toute la liste (paginée) et comparer en
+  code des valeurs NORMALISÉES (trim + minuscules) est plus robuste et
+  auto-diagnostique (le log donne le nombre d'entrées lues).
+- **Graph refuse d'inviter une adresse d'un domaine vérifié du tenant** → les
+  membres internes se détectent AVANT l'invitation (`userType eq Member`) et
+  se relient directement par leur oid.
+- **`local.settings.json` est du JSON strict** : une virgule oubliée casse le
+  démarrage de l'hôte Functions ; le SWA CLI n'affiche alors qu'un
+  « Could not connect to :7071 » — lancer `func start` dans `api/` pour voir
+  la vraie erreur (fichier + ligne).
+- **Simulateur SWA** : identité visible sur `/.auth/me`, changement de compte
+  via `/.auth/logout`. Rappel : pas d'oid en local → repli e-mail à
+  correspondance UNIQUE (deux lignes même e-mail = 404 volontaire).
+- **Jeux de test : un NN par persona** (résident autonome / résidents aidés)
+  et ne jamais croiser les pré-inscriptions — chaque pré-inscription
+  TRANSFÈRE la ligne vers le dernier compte utilisé.
+- **Fuseau horaire SharePoint** : un site neuf est en Pacifique américain par
+  défaut → horodatages décalés à l'affichage (stockage UTC, données saines).
+  Paramètres régionaux du site → Bruxelles + fr-BE.
+- **Les listes créées par API** n'apparaissent pas dans le menu latéral
+  (lancement rapide) — réglage d'interface à faire à la main.
+- **`INVITE_REDIRECT_URL` → pointer sur `/portail`** : l'invité activé
+  atterrit sur ses données ; `PORTAL_URL` se déduit intelligemment (pas de
+  double `/portail/portail`).
+
 ---
 
 ## 12. Prompt de relance (à coller au début de la prochaine conversation)
@@ -376,23 +650,29 @@ Dépendances ajoutées : `qrcode` (+ `@types/qrcode`), `tsx` (dev, provisioning)
 > Bonjour Claude. Je poursuis le développement de ResidentApp (portail Fedasil
 > pour résidents, React + TypeScript + CSS pur, Azure Static Web Apps +
 > Functions). CONTEXTE : tout l'état du projet est dans
-> ETAT-PROJET-ResidentApp.md (v4 du 9 juillet 2026) dans les fichiers du projet
+> ETAT-PROJET-ResidentApp.md (v5 du 9 juillet 2026) dans les fichiers du projet
 > — lis-le d'abord, en particulier la section 5 « Règles métier » et la section
 > 4 « Architecture Azure vs Entra ». En résumé : le parcours complet est validé
 > en production, l'authentification personnalisée Entra et le matching par `oid`
-> sont opérationnels, et un provisioning déclaratif des listes SharePoint est en
-> place (npm run sp:inspect / sp:provision).
+> sont opérationnels, le sélecteur de profils familiaux (familles ET aidantes
+> sociales avec garde-fou « ResidentApp Aidants », comptes internes liés
+> directement, règle « un dossier = un compte lié ») est validé en production,
+> le formulaire de pré-inscription est minimal (NN + e-mail + langue, noms lus
+> depuis la liste resident), la bascule trimestrielle est outillée
+> (PROCEDURE-BASCULE-TRIMESTRE.md + npm run sp:rotate), et un provisioning
+> déclaratif des 7 listes SharePoint est en place (npm run sp:inspect /
+> sp:provision). La migration SQL/Dataverse est analysée mais en attente de
+> décision hiérarchique.
 > Les fichiers actuels du code sont dans le projet : App.tsx, Portail.tsx,
 > fedasil.css, main.tsx, Subscription.ts, Me.ts, Declare.ts,
 > public/staticwebapp.config.json, sharepoint-schema.json,
-> scripts/provision-sharepoint.ts.
+> scripts/provision-sharepoint.ts, scripts/rotate-quarter.ts.
 > OBJECTIF DE CETTE DISCUSSION : [choisir dans la section 10 « Reste à faire »,
 > par exemple :]
-> * Sélecteur de profils familiaux dans Portail.tsx + assouplir App.tsx
->   (check-email) ;
-> * Gouvernance de l'année (colonne ou nommage des listes) + restriction du
->   mois déclarable ;
-> * Liste « Soldes » et processus de rappels de paiement.
+> * Liste « Soldes » et processus de rappels de paiement ;
+> * Lettrage des paiements (import CSV bancaire, candidat Power Automate) ;
+> * Durcissements production (Sites.Selected, NN_CHECKSUM_STRICT, CAPTCHA…) ;
+> * Réplication sur le tenant Fedasil (checklist §10 point 11).
 > Rappel de ma façon de travailler : je suis débutant confirmé, je préfère des
 > fichiers complets copier-coller prêts plutôt que des patchs, un pas-à-pas
 > pour les manipulations Azure/Entra, et je commite via l'interface Git de
