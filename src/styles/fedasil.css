@@ -488,9 +488,11 @@ a.btn {
   }
 }
 
-/* Tuile de donnée : libellé discret + valeur bien lisible */
+/* Tuile de donnée : libellé discret + valeur bien lisible.
+   Bordure transparente : même gabarit que la variante BOUTON (section 17). */
 .data-tile {
   background: var(--violet-8);
+  border: 1.5px solid transparent;
   border-radius: var(--radius);
   padding: 12px 16px;
 }
@@ -1107,4 +1109,96 @@ button.quarter-row:hover {
 
 .declare-help .declare-help-body p:last-child {
   margin-bottom: 0;
+}
+
+/* --- 17. Portail : statut de paiement (codes couleurs) et montant libre ------ */
+
+/* Codes couleurs du paiement — portés par du TEXTE, jamais par un élément
+   interactif, et toujours accompagnés d'un libellé (jamais la couleur seule) :
+     violet = à payer (état normal, rien d'alarmant)
+     ambre  = acompte versé (il reste un solde)
+     vert   = entièrement payé
+     rouge  = échéance dépassée (attention — le paiement reste possible) */
+
+/* Sous-libellé d'état dans une tuile (« Acompte versé », « Payé »…) */
+.data-tile .sub {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.data-tile.highlight .sub {
+  color: var(--violet);
+}
+
+.data-tile.ok .sub {
+  color: var(--vert);
+}
+
+/* Nouvelles tonalités : acompte (ambre) et échéance dépassée (rouge) */
+.data-tile.partial .value,
+.data-tile.partial .sub {
+  color: var(--jaune-texte);
+}
+
+.data-tile.overdue .value,
+.data-tile.overdue .sub {
+  color: var(--rouge-fonce);
+}
+
+/* Tuile CLIQUABLE (ex. « Reste à payer » -> carte de paiement).
+   L'affordance d'interaction reste VIOLETTE (bordure, flèche, hover),
+   quelle que soit la couleur d'état du texte — charte Fedasil. */
+button.data-tile {
+  font: inherit;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  position: relative;
+  border-color: var(--violet-25);
+  transition: border-color 0.15s;
+}
+
+button.data-tile:hover {
+  border-color: var(--violet);
+}
+
+button.data-tile .tile-arrow {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  color: var(--violet);
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+/* Le montant du bandeau « Payer maintenant » suit le MÊME code couleur que
+   la tuile « Reste à payer » (surcharges à spécificité suffisante). */
+.pay-cta .pay-cta-text strong.tone-partial {
+  color: var(--jaune-texte);
+}
+
+.pay-cta .pay-cta-text strong.tone-paid {
+  color: var(--vert);
+}
+
+.pay-cta .pay-cta-text strong.tone-overdue {
+  color: var(--rouge-fonce);
+}
+
+/* Montant libre dans la carte de paiement */
+.pay-amount-choice {
+  margin: 0 0 14px;
+}
+
+.pay-amount-choice .pay-amount-reset {
+  margin-top: 10px;
+}
+
+.pay-remainder {
+  margin: 8px 0 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--gris);
 }

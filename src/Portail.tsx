@@ -98,6 +98,18 @@ const labels = {
       "Le salaire brut est le montant avant les retenues (cotisations, impôts). Il se trouve en général en haut de votre fiche de paie.",
     whereNet:
       "Le salaire net est le montant que vous recevez sur votre compte en banque. Il se trouve en général en bas de votre fiche de paie.",
+    payOtherAmount: "Payer un autre montant",
+    payFullAmount: "Revenir au solde complet",
+    customAmountLabel: "Montant à payer (€)",
+    customAmountHelp:
+      "Entre 0,01 et {max}. Le reste pourra être payé plus tard avec la même communication.",
+    customAmountInvalid:
+      "Montant non valide. Indiquez un montant entre 0,01 et {max}.",
+    remainderAfter: "Après ce paiement, il restera {amount} pour ce mois.",
+    stateUnpaid: "À payer",
+    statePartial: "Acompte versé",
+    statePaid: "Payé",
+    stateOverdue: "Échéance dépassée",
     beneficiaryLabel: "Bénéficiaire",
     ibanLabel: "Compte (IBAN)",
     amountLabel: "Montant",
@@ -191,6 +203,18 @@ const labels = {
       "Het brutoloon is het bedrag vóór de inhoudingen (bijdragen, belastingen). Het staat meestal bovenaan uw loonfiche.",
     whereNet:
       "Het nettoloon is het bedrag dat u op uw bankrekening ontvangt. Het staat meestal onderaan uw loonfiche.",
+    payOtherAmount: "Een ander bedrag betalen",
+    payFullAmount: "Terug naar het volledige saldo",
+    customAmountLabel: "Te betalen bedrag (€)",
+    customAmountHelp:
+      "Tussen 0,01 en {max}. De rest kunt u later betalen met dezelfde mededeling.",
+    customAmountInvalid:
+      "Ongeldig bedrag. Geef een bedrag op tussen 0,01 en {max}.",
+    remainderAfter: "Na deze betaling blijft er {amount} over voor deze maand.",
+    stateUnpaid: "Te betalen",
+    statePartial: "Voorschot betaald",
+    statePaid: "Betaald",
+    stateOverdue: "Vervaldag verstreken",
     beneficiaryLabel: "Begunstigde",
     ibanLabel: "Rekening (IBAN)",
     amountLabel: "Bedrag",
@@ -283,6 +307,18 @@ const labels = {
       "The gross salary is the amount before deductions (contributions, taxes). It is usually at the top of your payslip.",
     whereNet:
       "The net salary is the amount you actually receive in your bank account. It is usually at the bottom of your payslip.",
+    payOtherAmount: "Pay a different amount",
+    payFullAmount: "Back to the full balance",
+    customAmountLabel: "Amount to pay (€)",
+    customAmountHelp:
+      "Between 0.01 and {max}. The rest can be paid later with the same communication.",
+    customAmountInvalid:
+      "Invalid amount. Enter an amount between 0.01 and {max}.",
+    remainderAfter: "After this payment, {amount} will remain for this month.",
+    stateUnpaid: "To pay",
+    statePartial: "Deposit paid",
+    statePaid: "Paid",
+    stateOverdue: "Deadline passed",
     beneficiaryLabel: "Beneficiary",
     ibanLabel: "Account (IBAN)",
     amountLabel: "Amount",
@@ -428,6 +464,50 @@ function parseAmount(raw: string): number | null {
   return Number.isFinite(n) && n >= 0 && n <= 100000
     ? Math.round(n * 100) / 100
     : null;
+}
+
+// --- Statut de paiement d'un mois (codes couleurs) --------------------------
+
+/** Les 4 états de paiement : rien versé / acompte / payé / échéance dépassée. */
+type PayStatus = "unpaid" | "partial" | "paid" | "overdue";
+
+/** Date limite de paiement d'un mois déclaré.
+ *  ⚠ RÈGLE PAR DÉFAUT — À CONFIRMER PAR LE MÉTIER : la contribution d'un
+ *  mois est due pour la FIN DU MOIS SUIVANT (ex. avril -> 31 mai).
+ *  L'année est déduite du trimestre applicatif (décalé, §5.16 de l'état
+ *  projet) : si le trimestre affiché est postérieur au trimestre calendaire
+ *  d'aujourd'hui, il appartient à l'année précédente (ex. T4 en janvier). */
+function paymentDeadline(month: number, quarter: number): Date {
+  const now = new Date();
+  const calendarQuarter = Math.floor(now.getMonth() / 3) + 1;
+  const year =
+    quarter > calendarQuarter ? now.getFullYear() - 1 : now.getFullYear();
+  // Dernier jour du mois suivant (le débordement de mois est géré par JS).
+  return new Date(year, month + 1, 0, 23, 59, 59);
+}
+
+/** Statut de paiement d'un mois déclaré.
+ *  L'échéance dépassée PRIME sur l'acompte (couleur distinctive). */
+function monthPayStatus(
+  m: MonthlyDeclaration,
+  quarter: number | null
+): PayStatus {
+  const due = (m.contribution ?? 0) - (m.paid ?? 0);
+  if (due <= 0.005) return "paid";
+  if (quarter !== null && new Date() > paymentDeadline(m.month, quarter)) {
+    return "overdue";
+  }
+  return (m.paid ?? 0) > 0.005 ? "partial" : "unpaid";
+}
+
+/** Tonalité de tuile correspondant à un statut de paiement. */
+function toneForStatus(
+  s: PayStatus
+): "highlight" | "ok" | "partial" | "overdue" {
+  if (s === "paid") return "ok";
+  if (s === "partial") return "partial";
+  if (s === "overdue") return "overdue";
+  return "highlight";
 }
 
 /** Contenu d'un QR EPC (« SEPA Credit Transfer », norme EPC069-12).
@@ -634,23 +714,46 @@ function SectionTitle({
   );
 }
 
-/** Tuile de donnée : libellé + valeur.
- *  tone : "highlight" = valeur en violet, "ok" = valeur en vert. */
+/** Tuile de donnée : libellé + valeur + sous-libellé d'état optionnel.
+ *  tone : "highlight" = violet, "ok" = vert, "partial" = ambre (acompte),
+ *  "overdue" = rouge (échéance dépassée) — le sous-libellé TEXTE accompagne
+ *  toujours la couleur (jamais la couleur seule).
+ *  onClick : rend la tuile cliquable (bouton), ex. « Reste à payer »
+ *  -> défilement vers la carte de paiement. */
 function DataTile({
   label,
   value,
   tone,
+  sub,
+  onClick,
 }: {
   label: string;
   value: string;
-  tone?: "highlight" | "ok";
+  tone?: "highlight" | "ok" | "partial" | "overdue";
+  sub?: string;
+  onClick?: () => void;
 }) {
-  return (
-    <div className={`data-tile${tone ? ` ${tone}` : ""}`}>
+  const className = `data-tile${tone ? ` ${tone}` : ""}`;
+  const inner = (
+    <>
       <span className="label">{label}</span>
       <span className="value">{value || "—"}</span>
-    </div>
+      {sub && <span className="sub">{sub}</span>}
+    </>
   );
+
+  if (onClick) {
+    return (
+      <button type="button" className={className} onClick={onClick}>
+        {inner}
+        <span className="tile-arrow" aria-hidden="true">
+          ›
+        </span>
+      </button>
+    );
+  }
+
+  return <div className={className}>{inner}</div>;
 }
 
 /** Carte trimestre : une ligne par mois + total.
@@ -770,7 +873,14 @@ function QuarterCard({
  *  sert à rien pour la personne (elle ne peut pas scanner son propre écran).
  *  Les champs copiables passent donc EN PREMIER et le QR devient optionnel
  *  (bouton « Afficher le code QR », pour scanner avec un autre appareil).
- *  Sur ordinateur : QR d'abord, puis les champs, comme avant. */
+ *  Sur ordinateur : QR d'abord, puis les champs, comme avant.
+ *
+ *  MONTANT LIBRE : par défaut, le montant proposé est le SOLDE du mois
+ *  (total si rien n'est versé, reste si un acompte existe). Le résident
+ *  peut aussi encoder un montant de son choix (ex. 100 € sur 245 €) : le
+ *  QR et le champ « Montant » suivent. La communication structurée ne
+ *  change JAMAIS (le champ Paid est un CUMUL, §5.17 : plusieurs virements
+ *  avec la même communication s'additionnent). */
 function PaymentCard({
   month,
   amount,
@@ -792,16 +902,39 @@ function PaymentCard({
   // Sur tactile, le QR est masqué par défaut et s'ouvre à la demande.
   const [qrVisible, setQrVisible] = useState(false);
 
+  // Montant libre : champ optionnel, pré-rempli avec le solde du mois.
+  const [customMode, setCustomMode] = useState(false);
+  const [customRaw, setCustomRaw] = useState("");
+  const customParsed = parseAmount(customRaw);
+  const customValid =
+    customParsed !== null &&
+    customParsed >= 0.01 &&
+    customParsed <= amount + 0.005;
+
+  // Montant effectivement proposé au paiement : solde du mois par défaut,
+  // montant libre s'il est valide. null = montant libre INVALIDE -> ni QR
+  // ni champs (jamais d'ambiguïté sur ce qui serait payé).
+  const effectiveAmount = customMode
+    ? customValid
+      ? (customParsed as number)
+      : null
+    : amount;
+
   // Le QR n'est généré que s'il sera montré (toujours sur ordinateur,
-  // à la demande sur tactile) : pas de calcul inutile sur mobile.
-  const wantQr = !isTouch || qrVisible;
+  // à la demande sur tactile) et que le montant est valide.
+  const wantQr = effectiveAmount !== null && (!isTouch || qrVisible);
 
   // Génère le QR localement (aucun service externe, compatible CSP).
   useEffect(() => {
-    if (!wantQr) return;
+    if (!wantQr || effectiveAmount === null) return;
     let cancelled = false;
     QRCode.toDataURL(
-      epcQrPayload(payment.beneficiary, payment.iban, amount, structuredCom),
+      epcQrPayload(
+        payment.beneficiary,
+        payment.iban,
+        effectiveAmount,
+        structuredCom
+      ),
       { width: 200, margin: 2, errorCorrectionLevel: "M" }
     )
       .then((url) => {
@@ -813,7 +946,7 @@ function PaymentCard({
     return () => {
       cancelled = true;
     };
-  }, [wantQr, payment.beneficiary, payment.iban, amount, structuredCom]);
+  }, [wantQr, payment.beneficiary, payment.iban, effectiveAmount, structuredCom]);
 
   const copy = async (field: string, value: string) => {
     try {
@@ -825,10 +958,13 @@ function PaymentCard({
     }
   };
 
-  const amountText = new Intl.NumberFormat(LOCALES[lang], {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(amount);
+  const amountText =
+    effectiveAmount === null
+      ? ""
+      : new Intl.NumberFormat(LOCALES[lang], {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        }).format(effectiveAmount);
 
   const fields: Array<{ key: string; label: string; value: string }> = [
     { key: "benef", label: t.beneficiaryLabel, value: payment.beneficiary },
@@ -870,10 +1006,73 @@ function PaymentCard({
     <div className="payment-card">
       <p className="payment-for">
         {t.payFor} <strong>{monthName(month, lang)}</strong> ·{" "}
-        <strong>{euro(amount, lang)}</strong>
+        <strong>
+          {effectiveAmount !== null ? euro(effectiveAmount, lang) : "—"}
+        </strong>
       </p>
 
-      {isTouch ? (
+      {/* Montant libre : solde complet par défaut, montant au choix sinon */}
+      <div className="pay-amount-choice">
+        {!customMode ? (
+          <button
+            type="button"
+            className="btn btn-outline btn-copy"
+            onClick={() => {
+              // Pré-rempli avec le solde : toujours valide à l'ouverture.
+              setCustomRaw(String(amount).replace(".", ","));
+              setCustomMode(true);
+            }}
+          >
+            {t.payOtherAmount}
+          </button>
+        ) : (
+          <div className={`field${customValid ? "" : " has-error"}`}>
+            <label htmlFor={`pay-amount-${month}`}>
+              {t.customAmountLabel}
+            </label>
+            <input
+              id={`pay-amount-${month}`}
+              type="text"
+              inputMode="decimal"
+              autoComplete="off"
+              value={customRaw}
+              onChange={(e) => setCustomRaw(e.target.value)}
+            />
+            <span className="helper">
+              {(customValid ? t.customAmountHelp : t.customAmountInvalid).replace(
+                "{max}",
+                euro(amount, lang)
+              )}
+            </span>
+            <button
+              type="button"
+              className="btn btn-outline btn-copy pay-amount-reset"
+              onClick={() => {
+                setCustomMode(false);
+                setCustomRaw("");
+              }}
+            >
+              {t.payFullAmount}
+            </button>
+          </div>
+        )}
+        {customMode &&
+          effectiveAmount !== null &&
+          amount - effectiveAmount > 0.005 && (
+            <p className="pay-remainder">
+              {t.remainderAfter.replace(
+                "{amount}",
+                euro(
+                  Math.round((amount - effectiveAmount) * 100) / 100,
+                  lang
+                )
+              )}
+            </p>
+          )}
+      </div>
+
+      {effectiveAmount !== null &&
+        (isTouch ? (
         <>
           {/* MOBILE / TABLETTE : champs copiables d'abord, QR à la demande. */}
           <p className="payment-manual-intro">{t.manualOnly}</p>
@@ -911,7 +1110,7 @@ function PaymentCard({
           {fieldsBlock}
           <p className="payment-note">{t.commNote}</p>
         </>
-      )}
+      ))}
 
       <p className="payment-delay">{t.paidDelay}</p>
     </div>
@@ -1371,6 +1570,35 @@ export default function Portail() {
     setPayScrollTick((n) => n + 1);
   };
 
+  // Statut de paiement du TRIMESTRE : code couleur PARTAGÉ entre le bandeau
+  // du haut et la tuile « Reste à payer » (toujours synchronisés).
+  // vert = tout payé · rouge = au moins une échéance dépassée ·
+  // ambre = acompte(s) versé(s) · violet = rien versé (état normal).
+  const quarterStatus: PayStatus =
+    !current || current.months.length === 0 || remaining <= 0.005
+      ? "paid"
+      : current.months.some(
+            (m) => monthPayStatus(m, current.quarter) === "overdue"
+          )
+        ? "overdue"
+        : totalPaid > 0.005
+          ? "partial"
+          : "unpaid";
+
+  // Statut de paiement du mois AFFICHÉ (colore la tuile « Payé »).
+  const displayedStatus: PayStatus | null =
+    displayed && current ? monthPayStatus(displayed, current.quarter) : null;
+
+  // Libellé texte accompagnant chaque statut (jamais la couleur seule).
+  const stateLabel = (s: PayStatus): string =>
+    s === "paid"
+      ? t.statePaid
+      : s === "partial"
+        ? t.statePartial
+        : s === "overdue"
+          ? t.stateOverdue
+          : t.stateUnpaid;
+
   const quarterTitle = (data: MeResponse | null, base: string): string => {
     if (!data || data.quarter === null) return base;
     const [first, , last] = quarterMonths(data.quarter);
@@ -1549,7 +1777,9 @@ export default function Portail() {
                     <div className="pay-cta" role="status">
                       <span className="pay-cta-text">
                         {duesBefore}
-                        <strong>{euro(remaining, language)}</strong>
+                        <strong className={`tone-${quarterStatus}`}>
+                          {euro(remaining, language)}
+                        </strong>
                         {duesAfter}
                       </span>
                       <button
@@ -1632,6 +1862,16 @@ export default function Portail() {
                             <DataTile
                               label={t.paid}
                               value={euro(displayed.paid, language)}
+                              tone={
+                                displayedStatus
+                                  ? toneForStatus(displayedStatus)
+                                  : undefined
+                              }
+                              sub={
+                                displayedStatus
+                                  ? stateLabel(displayedStatus)
+                                  : undefined
+                              }
                             />
                           </div>
                           <div className="declare-correct">
@@ -1677,7 +1917,13 @@ export default function Portail() {
                     <DataTile
                       label={t.remaining}
                       value={euro(remaining, language)}
-                      tone={remaining === 0 ? "ok" : "highlight"}
+                      tone={toneForStatus(quarterStatus)}
+                      sub={stateLabel(quarterStatus)}
+                      onClick={
+                        remaining > 0.005 && current.payment
+                          ? goToPayment
+                          : undefined
+                      }
                     />
                   </div>
 
