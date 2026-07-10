@@ -100,6 +100,13 @@ body {
   gap: 16px;
 }
 
+@media (max-width: 480px) {
+  .app-header {
+    padding: 10px 14px;
+    gap: 10px;
+  }
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -117,6 +124,23 @@ body {
   align-items: center;
   justify-content: center;
   font-weight: 600;
+}
+
+/* Groupe d'actions de l'en-tête : langue + déconnexion (portail).
+   La déconnexion doit rester visible en permanence (postes partagés). */
+.header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* Bouton de déconnexion compact, aligné sur la hauteur des pilules de langue */
+.app-header .btn-logout {
+  min-height: 36px;
+  padding: 7px 14px;
+  font-size: 0.85rem;
 }
 
 /* --- 4. Sélecteur de langue (pilules) ---------------------------------------- */
@@ -516,12 +540,22 @@ a.btn {
 
 /* --- 11. Portail : déclarations mensuelles et trimestre ----------------------- */
 
-/* Titre de section dans la carte du portail */
+/* Titre de section dans la carte du portail (pictogramme violet optionnel :
+   repère visuel pour les lecteurs peu à l'aise avec le texte) */
 .portal-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 1.05rem;
   font-weight: 600;
   color: var(--gris-fonce);
   margin: 26px 0 6px;
+}
+
+.portal-section-title .title-icon {
+  display: inline-flex;
+  color: var(--violet);
+  flex-shrink: 0;
 }
 
 /* Mois de la dernière déclaration, sous le titre de section */
@@ -741,6 +775,57 @@ button.quarter-row:hover {
   margin-top: 14px;
   justify-content: space-between;
   flex-wrap: wrap;
+}
+
+/* --- 12bis. Portail : ergonomie mobile du paiement ---------------------------- */
+
+/* Bandeau « il vous reste X € à payer » + bouton « Payer maintenant ».
+   Fond violet clair : un solde dû est NORMAL, jamais alarmant (pas de rouge
+   sur un élément qui appelle une action — charte Fedasil). */
+.pay-cta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--violet-8);
+  border: 1.5px solid var(--violet-25);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 4px;
+}
+
+.pay-cta .pay-cta-text strong {
+  color: var(--violet);
+  font-size: 1.05rem;
+}
+
+/* Sur mobile : texte au-dessus, bouton pleine largeur (pouce). */
+@media (max-width: 480px) {
+  .pay-cta {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .pay-cta .btn {
+    width: 100%;
+  }
+}
+
+/* Cible du défilement « Payer maintenant » : petit dégagement en haut
+   pour que le titre de section ne colle pas au bord de l'écran. */
+.pay-anchor {
+  scroll-margin-top: 16px;
+}
+
+/* Sur tactile : QR replié derrière un bouton (on ne peut pas scanner
+   l'écran qu'on tient en main ; utile seulement pour un AUTRE appareil). */
+.qr-toggle {
+  margin-top: 14px;
+}
+
+.qr-toggle .qr-block-touch {
+  margin-top: 12px;
+  margin-bottom: 0;
 }
 
 /* --- 13. Portail : déclaration des revenus par le résident ------------------- */
@@ -968,4 +1053,58 @@ button.quarter-row:hover {
 .form .email-known-notice {
   margin: -8px 0 0;
   font-size: 0.9rem;
+}
+
+/* --- 16. Portail : littératie, confirmations et récupération d'erreur -------- */
+
+/* Alerte avec bouton « Réessayer » : message à gauche, action à droite.
+   Le bouton reste violet (interaction) même dans une alerte rouge —
+   le rouge n'est JAMAIS porté par un élément interactif (charte). */
+.alert-retry {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+/* Aide dépliable « Où trouver ces montants sur ma fiche de paie ? ».
+   <details> natif : accessible au clavier, aucun JavaScript. */
+.declare-help {
+  margin: 0 0 14px;
+  background: var(--violet-8);
+  border-radius: var(--radius);
+}
+
+.declare-help summary {
+  cursor: pointer;
+  padding: 10px 14px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--violet);
+  list-style: none; /* chevron géré ci-dessous */
+}
+
+.declare-help summary::-webkit-details-marker {
+  display: none;
+}
+
+.declare-help summary::before {
+  content: "▸ ";
+}
+
+.declare-help[open] summary::before {
+  content: "▾ ";
+}
+
+.declare-help .declare-help-body {
+  padding: 0 14px 12px;
+  font-size: 0.9rem;
+  color: var(--gris);
+}
+
+.declare-help .declare-help-body p {
+  margin: 0 0 8px;
+}
+
+.declare-help .declare-help-body p:last-child {
+  margin-bottom: 0;
 }

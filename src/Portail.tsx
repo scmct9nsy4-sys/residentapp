@@ -5,6 +5,8 @@
 // L'API renvoie toutes les déclarations du trimestre, triées de la plus
 // récente à la plus ancienne : { quarter, months: [...] }.
 // Présentation :
+//   0. Bandeau « Il vous reste X € à payer » + bouton « Payer maintenant »
+//      (visible dès qu'un solde est dû ; amène directement au paiement)
 //   1. Tuiles du mois AFFICHÉ (par défaut le plus récent ; cliquer un mois
 //      dans la carte trimestre change le mois affiché)
 //   2. Carte « Trimestre en cours » : lignes de mois CLIQUABLES (coche =
@@ -12,6 +14,26 @@
 //   3. « Paiements du trimestre » : à payer / déjà payé / reste à payer
 //      (l'information principale pour le résident)
 //   4. Bouton vers le trimestre précédent (/api/me?quarter=previous)
+//
+// MOBILE (la majorité des résidents consultent depuis leur téléphone) :
+//   - Un code QR ne peut pas être scanné sur l'écran qui l'affiche : sur
+//     appareil tactile (hover:none + pointer:coarse), la carte de paiement
+//     met les champs COPIABLES en premier et le QR devient optionnel
+//     (bouton « Afficher le code QR », utile pour scanner avec un AUTRE
+//     appareil). Sur ordinateur : QR d'abord, comme avant.
+//   - Le bouton « Se déconnecter » est aussi dans l'EN-TÊTE (toujours
+//     visible, important sur les postes partagés) ; celui du pied de carte
+//     est conservé (chemin naturel après lecture).
+//
+// LITTÉRATIE ET CONFIANCE (public multilingue, à l'aise ou non avec l'écrit) :
+//   - Aide dépliable « Où trouver ces montants sur ma fiche de paie ? » dans
+//     le formulaire de déclaration (brut = haut de la fiche, net = bas).
+//   - Pictogrammes discrets sur les titres de section (repères visuels).
+//   - Confirmation verte après une déclaration/correction réussie, avec
+//     sélection automatique du mois concerné (enchaîne vers le paiement).
+//   - Erreurs récupérables : bouton « Réessayer » (réseaux mobiles
+//     instables) ; session expirée (401) -> retour à la connexion au lieu
+//     d'un message d'erreur incompréhensible.
 //
 // FAMILLES (plusieurs personnes partagent une adresse e-mail = même compte
 // Microsoft = même oid, mais des FA différents) :
@@ -24,7 +46,8 @@
 //     personne » reste visible tant qu'il y a plusieurs profils.
 // =============================================================================
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import type { ReactNode } from "react";
 import QRCode from "qrcode";
 
 import { useLanguage } from "./i18n/useLanguage";
@@ -60,6 +83,21 @@ const labels = {
     payFor: "Paiement pour",
     scanQr: "Scannez ce code avec votre application bancaire :",
     orManual: "Ou faites un virement avec ces informations :",
+    manualOnly: "Faites un virement avec ces informations :",
+    showQrBtn: "Afficher le code QR",
+    hideQrBtn: "Masquer le code QR",
+    qrOtherDevice:
+      "Ce code se scanne avec l'application bancaire d'un autre appareil.",
+    duesBanner: "Il vous reste {amount} à payer ce trimestre.",
+    payNow: "Payer maintenant",
+    retry: "Réessayer",
+    declaredOk:
+      "Votre déclaration de {month} est enregistrée. Contribution : {amount}.",
+    whereAmounts: "Où trouver ces montants sur ma fiche de paie ?",
+    whereGross:
+      "Le salaire brut est le montant avant les retenues (cotisations, impôts). Il se trouve en général en haut de votre fiche de paie.",
+    whereNet:
+      "Le salaire net est le montant que vous recevez sur votre compte en banque. Il se trouve en général en bas de votre fiche de paie.",
     beneficiaryLabel: "Bénéficiaire",
     ibanLabel: "Compte (IBAN)",
     amountLabel: "Montant",
@@ -139,6 +177,20 @@ const labels = {
     payFor: "Betaling voor",
     scanQr: "Scan deze code met uw bankapp:",
     orManual: "Of doe een overschrijving met deze gegevens:",
+    manualOnly: "Doe een overschrijving met deze gegevens:",
+    showQrBtn: "QR-code tonen",
+    hideQrBtn: "QR-code verbergen",
+    qrOtherDevice: "Deze code scant u met de bankapp van een ander toestel.",
+    duesBanner: "U moet dit kwartaal nog {amount} betalen.",
+    payNow: "Nu betalen",
+    retry: "Opnieuw proberen",
+    declaredOk:
+      "Uw aangifte voor {month} is geregistreerd. Bijdrage: {amount}.",
+    whereAmounts: "Waar vind ik deze bedragen op mijn loonfiche?",
+    whereGross:
+      "Het brutoloon is het bedrag vóór de inhoudingen (bijdragen, belastingen). Het staat meestal bovenaan uw loonfiche.",
+    whereNet:
+      "Het nettoloon is het bedrag dat u op uw bankrekening ontvangt. Het staat meestal onderaan uw loonfiche.",
     beneficiaryLabel: "Begunstigde",
     ibanLabel: "Rekening (IBAN)",
     amountLabel: "Bedrag",
@@ -217,6 +269,20 @@ const labels = {
     payFor: "Payment for",
     scanQr: "Scan this code with your banking app:",
     orManual: "Or make a transfer with these details:",
+    manualOnly: "Make a transfer with these details:",
+    showQrBtn: "Show QR code",
+    hideQrBtn: "Hide QR code",
+    qrOtherDevice: "Scan this code with the banking app on another device.",
+    duesBanner: "You still have {amount} to pay this quarter.",
+    payNow: "Pay now",
+    retry: "Try again",
+    declaredOk:
+      "Your declaration for {month} has been saved. Contribution: {amount}.",
+    whereAmounts: "Where can I find these amounts on my payslip?",
+    whereGross:
+      "The gross salary is the amount before deductions (contributions, taxes). It is usually at the top of your payslip.",
+    whereNet:
+      "The net salary is the amount you actually receive in your bank account. It is usually at the bottom of your payslip.",
     beneficiaryLabel: "Beneficiary",
     ibanLabel: "Account (IBAN)",
     amountLabel: "Amount",
@@ -268,6 +334,10 @@ const labels = {
     profileChange: "Switch person",
   },
 } as const;
+
+// URL de déconnexion du portail (renvoie vers "/" avec l'avis « ordinateur
+// partagé » ; voir App.tsx). Utilisée dans l'en-tête ET en pied de carte.
+const LOGOUT_URL = "/.auth/logout?post_logout_redirect_uri=%2F%3Floggedout%3D1";
 
 // --- Types (alignés sur la réponse de /api/me) ----------------------------------
 
@@ -386,6 +456,30 @@ function epcQrPayload(
   ].join("\n");
 }
 
+// --- Détection tactile (ergonomie mobile) ---------------------------------------
+
+/** true sur les appareils tactiles SANS souris (téléphones, tablettes).
+ *  Utilisé pour adapter la carte de paiement : un QR affiché sur l'écran
+ *  du téléphone ne peut pas être scanné par ce même téléphone.
+ *  Réactif : suit les changements (ex. tablette avec souris branchée). */
+function useCoarsePointer(): boolean {
+  const QUERY = "(hover: none) and (pointer: coarse)";
+  const [coarse, setCoarse] = useState<boolean>(
+    () =>
+      typeof window !== "undefined" && window.matchMedia(QUERY).matches
+  );
+
+  useEffect(() => {
+    const mq = window.matchMedia(QUERY);
+    const onChange = (e: MediaQueryListEvent) => setCoarse(e.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+    // QUERY est une constante : pas de dépendance nécessaire.
+  }, []);
+
+  return coarse;
+}
+
 // --- Petits composants de présentation ----------------------------------------
 
 /** Sélecteur de langue en pilules (copie locale de celui d'App.tsx ;
@@ -434,6 +528,109 @@ function CheckIcon({ size = 22 }: { size?: number }) {
       <circle cx="12" cy="12" r="10" />
       <path d="M8 12.5l2.5 2.5L16 9" />
     </svg>
+  );
+}
+
+/** Icônes de section : repères visuels pour les lecteurs peu à l'aise avec
+ *  le texte (public multilingue). Toujours aria-hidden : le titre TEXTE
+ *  porte l'information, l'icône n'est qu'un renfort. */
+function CalendarIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="3" y="4" width="18" height="18" rx="2" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="3" y1="10" x2="21" y2="10" />
+    </svg>
+  );
+}
+
+function EuroIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4 10h12" />
+      <path d="M4 14h9" />
+      <path d="M19 6a7.7 7.7 0 0 0-5.2-2A7.9 7.9 0 0 0 6 12c0 4.4 3.5 8 7.8 8 2 0 3.8-.8 5.2-2" />
+    </svg>
+  );
+}
+
+function PenIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+    </svg>
+  );
+}
+
+function FileTextIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+      <line x1="16" y1="13" x2="8" y2="13" />
+      <line x1="16" y1="17" x2="8" y2="17" />
+    </svg>
+  );
+}
+
+/** Titre de section avec pictogramme optionnel (violet, décoratif). */
+function SectionTitle({
+  icon,
+  children,
+}: {
+  icon?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <h2 className="portal-section-title">
+      {icon && (
+        <span className="title-icon" aria-hidden="true">
+          {icon}
+        </span>
+      )}
+      <span>{children}</span>
+    </h2>
   );
 }
 
@@ -567,7 +764,13 @@ function QuarterCard({
 }
 
 /** Carte de paiement : QR EPC + informations de virement copiables.
- *  Affichée pour le mois impayé le plus ancien (règle d'imputation FIFO). */
+ *  Affichée pour le mois impayé le plus ancien (règle d'imputation FIFO).
+ *
+ *  ERGONOMIE MOBILE : sur appareil tactile (le cas majoritaire), le QR ne
+ *  sert à rien pour la personne (elle ne peut pas scanner son propre écran).
+ *  Les champs copiables passent donc EN PREMIER et le QR devient optionnel
+ *  (bouton « Afficher le code QR », pour scanner avec un autre appareil).
+ *  Sur ordinateur : QR d'abord, puis les champs, comme avant. */
 function PaymentCard({
   month,
   amount,
@@ -582,11 +785,20 @@ function PaymentCard({
   lang: Language;
 }) {
   const t = labels[lang];
+  const isTouch = useCoarsePointer();
+
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  // Sur tactile, le QR est masqué par défaut et s'ouvre à la demande.
+  const [qrVisible, setQrVisible] = useState(false);
+
+  // Le QR n'est généré que s'il sera montré (toujours sur ordinateur,
+  // à la demande sur tactile) : pas de calcul inutile sur mobile.
+  const wantQr = !isTouch || qrVisible;
 
   // Génère le QR localement (aucun service externe, compatible CSP).
   useEffect(() => {
+    if (!wantQr) return;
     let cancelled = false;
     QRCode.toDataURL(
       epcQrPayload(payment.beneficiary, payment.iban, amount, structuredCom),
@@ -601,7 +813,7 @@ function PaymentCard({
     return () => {
       cancelled = true;
     };
-  }, [payment.beneficiary, payment.iban, amount, structuredCom]);
+  }, [wantQr, payment.beneficiary, payment.iban, amount, structuredCom]);
 
   const copy = async (field: string, value: string) => {
     try {
@@ -625,6 +837,35 @@ function PaymentCard({
     { key: "com", label: t.communicationLabel, value: structuredCom },
   ];
 
+  // Bloc des champs copiables (partagé entre les deux dispositions).
+  const fieldsBlock = (
+    <div className="payment-fields">
+      {fields.map((f) => (
+        <div className="pay-field" key={f.key}>
+          <span className="pf-label">{f.label}</span>
+          <span className="pf-value">{f.value}</span>
+          <button
+            type="button"
+            className="btn btn-outline btn-copy"
+            onClick={() => copy(f.key, f.value)}
+          >
+            {copiedField === f.key ? t.copied : t.copy}
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+
+  // Bloc QR (image seule ; le texte d'intro diffère selon le contexte).
+  const qrImage = qrDataUrl && (
+    <img
+      src={qrDataUrl}
+      width={200}
+      height={200}
+      alt={`QR — ${t.payFor} ${monthName(month, lang)}`}
+    />
+  );
+
   return (
     <div className="payment-card">
       <p className="payment-for">
@@ -632,36 +873,46 @@ function PaymentCard({
         <strong>{euro(amount, lang)}</strong>
       </p>
 
-      {qrDataUrl && (
-        <div className="qr-block">
-          <p>{t.scanQr}</p>
-          <img
-            src={qrDataUrl}
-            width={200}
-            height={200}
-            alt={`QR — ${t.payFor} ${monthName(month, lang)}`}
-          />
-        </div>
-      )}
+      {isTouch ? (
+        <>
+          {/* MOBILE / TABLETTE : champs copiables d'abord, QR à la demande. */}
+          <p className="payment-manual-intro">{t.manualOnly}</p>
+          {fieldsBlock}
+          <p className="payment-note">{t.commNote}</p>
 
-      <p className="payment-manual-intro">{t.orManual}</p>
-      <div className="payment-fields">
-        {fields.map((f) => (
-          <div className="pay-field" key={f.key}>
-            <span className="pf-label">{f.label}</span>
-            <span className="pf-value">{f.value}</span>
+          <div className="qr-toggle">
             <button
               type="button"
-              className="btn btn-outline btn-copy"
-              onClick={() => copy(f.key, f.value)}
+              className="btn btn-outline"
+              aria-expanded={qrVisible}
+              onClick={() => setQrVisible((v) => !v)}
             >
-              {copiedField === f.key ? t.copied : t.copy}
+              {qrVisible ? t.hideQrBtn : t.showQrBtn}
             </button>
+            {qrVisible && (
+              <div className="qr-block qr-block-touch">
+                <p>{t.qrOtherDevice}</p>
+                {qrImage}
+              </div>
+            )}
           </div>
-        ))}
-      </div>
+        </>
+      ) : (
+        <>
+          {/* ORDINATEUR : QR d'abord (on le scanne avec son téléphone). */}
+          {qrDataUrl && (
+            <div className="qr-block">
+              <p>{t.scanQr}</p>
+              {qrImage}
+            </div>
+          )}
 
-      <p className="payment-note">{t.commNote}</p>
+          <p className="payment-manual-intro">{t.orManual}</p>
+          {fieldsBlock}
+          <p className="payment-note">{t.commNote}</p>
+        </>
+      )}
+
       <p className="payment-delay">{t.paidDelay}</p>
     </div>
   );
@@ -764,6 +1015,16 @@ function DeclarationForm({
           monthName(month, lang)
         )}
       </p>
+
+      {/* Aide littératie : où trouver brut et net sur la fiche de paie.
+          <details> natif : accessible clavier, aucun JavaScript. */}
+      <details className="declare-help">
+        <summary>{t.whereAmounts}</summary>
+        <div className="declare-help-body">
+          <p>{t.whereGross}</p>
+          <p>{t.whereNet}</p>
+        </div>
+      </details>
 
       {lines.map((line, i) => (
         <fieldset className="payslip" key={i}>
@@ -885,16 +1146,41 @@ export default function Portail() {
   // Mois déclaré en cours de CORRECTION (formulaire pré-rempli).
   const [editingMonth, setEditingMonth] = useState<number | null>(null);
 
-  // Sélectionner un mois quitte toujours le mode correction.
+  // Mois qui vient d'être déclaré/corrigé avec succès : confirmation verte
+  // au-dessus des tuiles (rassure et enchaîne vers le paiement).
+  // Effacé dès que l'utilisateur navigue ailleurs.
+  const [successMonth, setSuccessMonth] = useState<number | null>(null);
+
+  // Sélectionner un mois quitte toujours le mode correction
+  // et efface la confirmation de déclaration.
   const selectMonth = (month: number) => {
     setSelectedMonth(month);
     setEditingMonth(null);
+    setSuccessMonth(null);
   };
 
   // Trimestre précédent : chargé à la demande, puis gardé en mémoire.
   const [view, setView] = useState<"current" | "previous">("current");
   const [prevStatus, setPrevStatus] = useState<PrevStatus>("idle");
   const [previous, setPrevious] = useState<MeResponse | null>(null);
+
+  // --- « Payer maintenant » : défilement vers la carte de paiement -----------
+  // payRef pointe sur la section paiement ; payScrollTick déclenche le
+  // défilement APRÈS le re-rendu (le mois impayé le plus ancien vient
+  // d'être sélectionné, la carte de paiement est donc bien montée).
+  const payRef = useRef<HTMLDivElement | null>(null);
+  const [payScrollTick, setPayScrollTick] = useState(0);
+
+  useEffect(() => {
+    if (payScrollTick === 0) return;
+    const reduceMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)"
+    ).matches;
+    payRef.current?.scrollIntoView({
+      behavior: reduceMotion ? "auto" : "smooth",
+      block: "start",
+    });
+  }, [payScrollTick]);
 
   // --- Familles : plusieurs profils sur un même compte -----------------------
   // profiles : la liste des personnes liées au compte (null = pas encore su).
@@ -909,6 +1195,13 @@ export default function Portail() {
     try {
       const url = fa ? `/api/me?fa=${encodeURIComponent(fa)}` : "/api/me";
       const res = await fetch(url);
+      // Session expirée pendant la consultation : repartir vers la
+      // connexion plutôt que d'afficher une erreur incompréhensible.
+      if (res.status === 401) {
+        window.location.href =
+          "/.auth/login/aad?post_login_redirect_uri=/portail";
+        return;
+      }
       if (res.status === 404) {
         setStatus("nodata");
         return;
@@ -945,6 +1238,7 @@ export default function Portail() {
   // les appels suivants (consultation, trimestre précédent, déclaration).
   const chooseProfile = (fa: string) => {
     setActiveFa(fa);
+    setSuccessMonth(null);
     // Le cache du trimestre précédent appartient à l'ANCIEN profil : on le vide.
     setPrevious(null);
     setPrevStatus("idle");
@@ -957,6 +1251,7 @@ export default function Portail() {
   const changeProfile = () => {
     setEditingMonth(null);
     setSelectedMonth(null);
+    setSuccessMonth(null);
     setView("current");
     setStatus("chooseProfile");
   };
@@ -994,17 +1289,29 @@ export default function Portail() {
     };
   }, []);
 
-  // Bascule vers le trimestre précédent (chargé une seule fois PAR profil :
-  // le cache est vidé à chaque changement de personne).
-  const showPrevious = async () => {
-    setView("previous");
-    if (prevStatus !== "idle") return;
+  // Déclaration/correction envoyée avec succès : recharge les données,
+  // ré-affiche le mois concerné (loadCurrent sélectionnerait sinon le plus
+  // récent) et montre la confirmation verte.
+  const handleDeclared = async (month: number) => {
+    await loadCurrent(activeFa);
+    setSelectedMonth(month);
+    setEditingMonth(null);
+    setSuccessMonth(month);
+  };
+
+  // Chargement (ou RE-chargement après erreur) du trimestre précédent.
+  const loadPrevious = async () => {
     setPrevStatus("loading");
     try {
       const url = activeFa
         ? `/api/me?quarter=previous&fa=${encodeURIComponent(activeFa)}`
         : "/api/me?quarter=previous";
       const res = await fetch(url);
+      if (res.status === 401) {
+        window.location.href =
+          "/.auth/login/aad?post_login_redirect_uri=/portail";
+        return;
+      }
       if (!res.ok) {
         setPrevStatus("error");
         return;
@@ -1015,6 +1322,14 @@ export default function Portail() {
     } catch {
       setPrevStatus("error");
     }
+  };
+
+  // Bascule vers le trimestre précédent (chargé une seule fois PAR profil :
+  // le cache est vidé à chaque changement de personne).
+  const showPrevious = () => {
+    setView("previous");
+    setSuccessMonth(null);
+    if (prevStatus === "idle") void loadPrevious();
   };
 
   // Déclaration affichée dans les tuiles (mois sélectionné, sinon la dernière).
@@ -1049,6 +1364,13 @@ export default function Portail() {
         .find((m) => (m.contribution ?? 0) - (m.paid ?? 0) > 0.005) ?? null
     : null;
 
+  // « Payer maintenant » : sélectionne le mois impayé le plus ancien (FIFO)
+  // puis fait défiler jusqu'à la carte de paiement (voir payScrollTick).
+  const goToPayment = () => {
+    if (oldestUnpaid) selectMonth(oldestUnpaid.month);
+    setPayScrollTick((n) => n + 1);
+  };
+
   const quarterTitle = (data: MeResponse | null, base: string): string => {
     if (!data || data.quarter === null) return base;
     const [first, , last] = quarterMonths(data.quarter);
@@ -1057,6 +1379,9 @@ export default function Portail() {
       language
     ).toLowerCase()})`;
   };
+
+  // Bandeau « il vous reste X à payer » : texte autour du montant en gras.
+  const [duesBefore, duesAfter] = t.duesBanner.split("{amount}");
 
   return (
     <>
@@ -1069,11 +1394,18 @@ export default function Portail() {
           <span>fedasil</span>
         </div>
 
-        <LangPills
-          value={language}
-          onChange={setLanguage}
-          ariaLabel="Language / Langue / Taal"
-        />
+        {/* Langue + déconnexion : la déconnexion doit rester visible en
+            permanence (postes partagés dans les centres d'accueil). */}
+        <div className="header-actions">
+          <LangPills
+            value={language}
+            onChange={setLanguage}
+            ariaLabel="Language / Langue / Taal"
+          />
+          <a className="btn btn-outline btn-logout" href={LOGOUT_URL}>
+            {t.logout}
+          </a>
+        </div>
       </header>
 
       <main className="page">
@@ -1150,8 +1482,21 @@ export default function Portail() {
           )}
 
           {status === "error" && (
-            <div className="alert alert-error" role="alert">
-              {t.error}
+            <div
+              className="alert alert-error alert-flex alert-retry"
+              role="alert"
+            >
+              <span>{t.error}</span>
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => {
+                  setStatus("loading");
+                  void loadCurrent(activeFa);
+                }}
+              >
+                {t.retry}
+              </button>
             </div>
           )}
 
@@ -1170,13 +1515,60 @@ export default function Portail() {
                 </div>
               ) : (
                 <>
+                  {/* Confirmation de la déclaration qui vient d'être envoyée
+                        (D) : mois + contribution recalculée par le serveur,
+                        lue dans les données rechargées. */}
+                  {successMonth !== null &&
+                    editingMonth === null &&
+                    !isMissingSelected &&
+                    displayed &&
+                    displayed.month === successMonth && (
+                      <div
+                        className="alert alert-success alert-flex"
+                        role="status"
+                      >
+                        <CheckIcon />
+                        <span>
+                          {t.declaredOk
+                            .replace(
+                              "{month}",
+                              monthName(successMonth, language)
+                            )
+                            .replace(
+                              "{amount}",
+                              euro(displayed.contribution, language)
+                            )}
+                        </span>
+                      </div>
+                    )}
+
+                  {/* 0. Bandeau « reste à payer » + accès direct au paiement.
+                        Fond violet clair (jamais rouge : un solde dû est
+                        normal, rien d'alarmant — charte Fedasil). */}
+                  {remaining > 0.005 && current.payment && (
+                    <div className="pay-cta" role="status">
+                      <span className="pay-cta-text">
+                        {duesBefore}
+                        <strong>{euro(remaining, language)}</strong>
+                        {duesAfter}
+                      </span>
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={goToPayment}
+                      >
+                        {t.payNow}
+                      </button>
+                    </div>
+                  )}
+
                   {/* 1. Mois non déclaré sélectionné OU correction en cours
                         -> formulaire ; sinon tuiles du mois affiché */}
                   {isMissingSelected && selectedMonth !== null ? (
                     <>
-                      <h2 className="portal-section-title">
+                      <SectionTitle icon={<PenIcon />}>
                         {t.declareTitle}
-                      </h2>
+                      </SectionTitle>
                       <p className="month-caption">
                         {monthName(selectedMonth, language)}
                       </p>
@@ -1184,13 +1576,15 @@ export default function Portail() {
                         key={selectedMonth}
                         month={selectedMonth}
                         lang={language}
-                        onSubmitted={() => loadCurrent(activeFa)}
+                        onSubmitted={() => void handleDeclared(selectedMonth)}
                         fa={activeFa}
                       />
                     </>
                   ) : displayed && editingMonth === displayed.month ? (
                     <>
-                      <h2 className="portal-section-title">{t.correctBtn}</h2>
+                      <SectionTitle icon={<PenIcon />}>
+                        {t.correctBtn}
+                      </SectionTitle>
                       <p className="month-caption">
                         {monthName(displayed.month, language)}
                       </p>
@@ -1198,7 +1592,9 @@ export default function Portail() {
                         key={`edit-${displayed.month}`}
                         month={displayed.month}
                         lang={language}
-                        onSubmitted={() => loadCurrent(activeFa)}
+                        onSubmitted={() =>
+                          void handleDeclared(displayed.month)
+                        }
                         initial={{
                           gross: displayed.grossSalary,
                           net: displayed.netSalary,
@@ -1209,11 +1605,11 @@ export default function Portail() {
                     </>
                   ) : (
                     <>
-                      <h2 className="portal-section-title">
+                      <SectionTitle icon={<FileTextIcon />}>
                         {displayed && displayed.month === latestMonth
                           ? t.lastDeclaration
                           : t.displayedDeclaration}
-                      </h2>
+                      </SectionTitle>
                       {displayed && (
                         <>
                           <p className="month-caption">
@@ -1255,9 +1651,9 @@ export default function Portail() {
                   )}
 
                   {/* 2. Les mois du trimestre (cliquables) */}
-                  <h2 className="portal-section-title">
+                  <SectionTitle icon={<CalendarIcon />}>
                     {quarterTitle(current, t.quarterCurrent)}
-                  </h2>
+                  </SectionTitle>
                   <QuarterCard
                     data={current}
                     lang={language}
@@ -1266,7 +1662,9 @@ export default function Portail() {
                   />
 
                   {/* 3. Récapitulatif des paiements (l'info clé du résident) */}
-                  <h2 className="portal-section-title">{t.paymentsTitle}</h2>
+                  <SectionTitle icon={<EuroIcon />}>
+                    {t.paymentsTitle}
+                  </SectionTitle>
                   <div className="recap-grid">
                     <DataTile
                       label={t.toPay}
@@ -1284,13 +1682,16 @@ export default function Portail() {
                   </div>
 
                   {/* 4. Paiement : suit le mois sélectionné dans la carte
-                        (masqué pendant une déclaration ou une correction) */}
+                        (masqué pendant une déclaration ou une correction).
+                        payRef = cible du bouton « Payer maintenant ». */}
                   {!isMissingSelected &&
                     editingMonth === null &&
                     current.payment &&
                     displayed && (
-                    <>
-                      <h2 className="portal-section-title">{t.payTitle}</h2>
+                    <div ref={payRef} className="pay-anchor">
+                      <SectionTitle icon={<EuroIcon />}>
+                        {t.payTitle}
+                      </SectionTitle>
 
                       {displayedDue > 0.005 && displayed.structuredCom ? (
                         <PaymentCard
@@ -1341,7 +1742,7 @@ export default function Portail() {
                             </button>
                           </div>
                         )}
-                    </>
+                    </div>
                   )}
                 </>
               )}
@@ -1361,9 +1762,9 @@ export default function Portail() {
           {/* ---------- Vue : trimestre précédent ---------- */}
           {status === "ready" && view === "previous" && (
             <>
-              <h2 className="portal-section-title">
+              <SectionTitle icon={<CalendarIcon />}>
                 {quarterTitle(previous, t.quarterPrevious)}
-              </h2>
+              </SectionTitle>
 
               {prevStatus === "loading" && (
                 <div className="loading-row" role="status">
@@ -1373,8 +1774,18 @@ export default function Portail() {
               )}
 
               {prevStatus === "error" && (
-                <div className="alert alert-error" role="alert">
-                  {t.error}
+                <div
+                  className="alert alert-error alert-flex alert-retry"
+                  role="alert"
+                >
+                  <span>{t.error}</span>
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    onClick={() => void loadPrevious()}
+                  >
+                    {t.retry}
+                  </button>
                 </div>
               )}
 
@@ -1401,10 +1812,7 @@ export default function Portail() {
           )}
 
           <div className="card-footer">
-            <a
-              className="btn btn-outline"
-              href="/.auth/logout?post_logout_redirect_uri=%2F%3Floggedout%3D1"
-            >
+            <a className="btn btn-outline" href={LOGOUT_URL}>
               {t.logout}
             </a>
           </div>
