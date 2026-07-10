@@ -81,9 +81,77 @@
         { "name": "NetSalary", "type": "number", "documentOnly": true },
         { "name": "GrossSalary", "type": "number", "documentOnly": true },
         { "name": "Contribution", "type": "number", "documentOnly": true },
-        { "name": "Paid", "type": "number", "documentOnly": true },
+        { "name": "Paid", "type": "number", "documentOnly": true, "note": "CUMUL payé pour le mois (plusieurs virements possibles avec la même communication structurée : paiement en plusieurs fois). Détail dans KB-Paiements." },
         { "name": "StructuredCom", "type": "text", "documentOnly": true },
         { "name": "StructuredText", "type": "text", "documentOnly": true, "note": "Colonne existante (usage historique)." }
+      ]
+    },
+    {
+      "displayName": "KB-Cumul T1",
+      "description": "Déclarations mensuelles du trimestre 1 (mêmes colonnes que T4). Colonnes CRÉABLES : sur un tenant de test elles sont créées, sur le tenant Fedasil (où la liste existe) elles sont seulement vérifiées.",
+      "columns": [
+        { "name": "FedasilNumber", "type": "text" },
+        { "name": "Month", "type": "number" },
+        { "name": "NetSalary", "type": "number" },
+        { "name": "GrossSalary", "type": "number" },
+        { "name": "Contribution", "type": "number" },
+        { "name": "Paid", "type": "number" },
+        { "name": "StructuredCom", "type": "text" },
+        { "name": "StructuredText", "type": "text" }
+      ]
+    },
+    {
+      "displayName": "KB-Cumul T2",
+      "description": "Déclarations mensuelles du trimestre 2 (mêmes colonnes que T4).",
+      "columns": [
+        { "name": "FedasilNumber", "type": "text" },
+        { "name": "Month", "type": "number" },
+        { "name": "NetSalary", "type": "number" },
+        { "name": "GrossSalary", "type": "number" },
+        { "name": "Contribution", "type": "number" },
+        { "name": "Paid", "type": "number" },
+        { "name": "StructuredCom", "type": "text" },
+        { "name": "StructuredText", "type": "text" }
+      ]
+    },
+    {
+      "displayName": "KB-Cumul T3",
+      "description": "Déclarations mensuelles du trimestre 3 (mêmes colonnes que T4).",
+      "columns": [
+        { "name": "FedasilNumber", "type": "text" },
+        { "name": "Month", "type": "number" },
+        { "name": "NetSalary", "type": "number" },
+        { "name": "GrossSalary", "type": "number" },
+        { "name": "Contribution", "type": "number" },
+        { "name": "Paid", "type": "number" },
+        { "name": "StructuredCom", "type": "text" },
+        { "name": "StructuredText", "type": "text" }
+      ]
+    },
+    {
+      "displayName": "KB-Paiements",
+      "description": "Paiements bancaires (import CSV hebdomadaire de la banque). Une ligne = UN virement ; un même mois peut être payé en plusieurs virements portant la même communication structurée (Paid dans KB-Cumul = le CUMUL). ⚠ STRUCTURE DE TEST : la liste réelle existe sur le tenant Fedasil — relever ses noms internes avec sp:inspect et ALIGNER ce schéma avant tout provisioning là-bas.",
+      "columns": [
+        {
+          "name": "Title",
+          "type": "text",
+          "documentOnly": true,
+          "note": "Colonne intégrée. Proposition : référence bancaire unique du mouvement (n° extrait/séquence) — clé d'idempotence des imports (pas de doublon si le même CSV est rejoué)."
+        },
+        { "name": "PaymentDate", "type": "dateTime", "note": "Date valeur du virement." },
+        { "name": "Amount", "type": "number", "note": "Montant du virement (positif)." },
+        { "name": "StructuredCom", "type": "text", "note": "Communication structurée +++xxx/xxxx/xxxxx+++ si présente et valide (objectif : 100 % des paiements)." },
+        { "name": "FreeCom", "type": "note", "note": "Communication libre (paiements manuels historiques) — file d'attente du lettrage manuel." },
+        { "name": "CounterpartyName", "type": "text", "note": "Nom du donneur d'ordre (aide au lettrage manuel)." },
+        { "name": "CounterpartyIBAN", "type": "text", "note": "IBAN du donneur d'ordre (aide au lettrage manuel)." },
+        { "name": "FedasilNumber", "type": "text", "note": "FA résolu après lettrage (vide tant que non imputé)." },
+        { "name": "Month", "type": "number", "note": "Mois imputé après lettrage." },
+        {
+          "name": "Status",
+          "type": "choice",
+          "choices": ["À traiter", "Imputé", "Anomalie"],
+          "note": "État du lettrage : « À traiter » à l'import ; « Imputé » quand reporté dans Paid (KB-Cumul) ; « Anomalie » si irrésoluble (comm invalide, montant incohérent…)."
+        }
       ]
     }
   ]

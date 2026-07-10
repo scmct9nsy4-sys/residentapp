@@ -137,12 +137,17 @@ const INVITE_REDIRECT_URL = process.env["INVITE_REDIRECT_URL"];
 
 // URL du portail, utilisée dans l'e-mail de confirmation des MEMBRES internes
 // (pas de lien d'activation à racheter : ils se connectent directement).
-// Par défaut : INVITE_REDIRECT_URL + /portail ; surchargée via PORTAL_URL.
-const PORTAL_URL =
-  process.env["PORTAL_URL"] ??
-  (INVITE_REDIRECT_URL
-    ? `${INVITE_REDIRECT_URL.replace(/\/+$/, "")}/portail`
-    : undefined);
+// Défaut : déduite d'INVITE_REDIRECT_URL — si elle pointe déjà sur /portail
+// (configuration recommandée), elle est reprise telle quelle ; sinon on
+// ajoute /portail. PORTAL_URL ne sert qu'à surcharger ce défaut.
+function derivePortalUrl(): string | undefined {
+  const explicit = process.env["PORTAL_URL"];
+  if (explicit) return explicit;
+  if (!INVITE_REDIRECT_URL) return undefined;
+  const base = INVITE_REDIRECT_URL.replace(/\/+$/, "");
+  return base.toLowerCase().endsWith("/portail") ? base : `${base}/portail`;
+}
+const PORTAL_URL = derivePortalUrl();
 
 // Active la validation du checksum (modulo 97) du numéro national belge.
 // Désactivée par défaut pour ne pas bloquer d'éventuels numéros de test
