@@ -645,27 +645,45 @@ async function isStaffEmailAllowed(
       return false;
     }
 
-    const encoded = email.replace(/'/g, "''");
-    const url =
+    // La liste des aidants autorisés est PETITE (quelques dizaines d'entrées
+    // au plus) : on lit tout et on compare en code, insensible à la casse et
+    // aux espaces. Plus robuste qu'un $filter Graph (indexation des colonnes,
+    // casse, espaces parasites saisis dans SharePoint).
+    const target = email.trim().toLowerCase();
+    let url: string | null =
       `https://graph.microsoft.com/v1.0/sites/${siteId}/lists/${listId}` +
-      `/items?$select=id&$expand=fields($select=${SP_STAFF_EMAIL_FIELD})` +
-      `&$filter=fields/${SP_STAFF_EMAIL_FIELD} eq '${encoded}'`;
+      `/items?$select=id&$expand=fields($select=${SP_STAFF_EMAIL_FIELD})&$top=200`;
+    let count = 0;
 
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) {
-      context.log("Erreur lecture garde-fou aidants, statut:", res.status);
-      return false; // fail-closed
+    while (url) {
+      const res: Response = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        context.log("Erreur lecture garde-fou aidants, statut:", res.status);
+        return false; // fail-closed
+      }
+      const json = (await res.json()) as {
+        value?: Array<{ fields?: Record<string, unknown> }>;
+        "@odata.nextLink"?: string;
+      };
+      for (const item of json.value ?? []) {
+        count++;
+        const value = String(item.fields?.[SP_STAFF_EMAIL_FIELD] ?? "")
+          .trim()
+          .toLowerCase();
+        if (value && value === target) {
+          context.log(`Garde-fou aidants pour ${maskEmail(email)} : AUTORISÉ`);
+          return true;
+        }
+      }
+      url = json["@odata.nextLink"] ?? null;
     }
-    const json = (await res.json()) as { value?: unknown[] };
-    const allowed = (json.value?.length ?? 0) > 0;
+
     context.log(
-      `Garde-fou aidants pour ${maskEmail(email)} : ${
-        allowed ? "AUTORISÉ" : "refusé"
-      }`
+      `Garde-fou aidants pour ${maskEmail(email)} : refusé (${count} entrée(s) dans la liste).`
     );
-    return allowed;
+    return false;
   } catch (error) {
     context.log("Exception garde-fou aidants (fail-closed):", error);
     return false;
