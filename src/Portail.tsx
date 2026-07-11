@@ -5,10 +5,14 @@
 // L'API renvoie toutes les déclarations du trimestre, triées de la plus
 // récente à la plus ancienne : { quarter, months: [...] }.
 // Présentation :
-//   0. Bandeau « Il vous reste X € à payer » + bouton « Payer maintenant »
-//      (visible dès qu'un solde est dû ; amène directement au paiement)
+//   0. La pastille « Votre accès est activé » n'apparaît qu'à la PREMIÈRE
+//      visite réussie du compte sur cet appareil (clé localStorage par oid) ;
+//      ensuite l'espace en haut de page est rendu au contenu utile
 //   1. Tuiles du mois AFFICHÉ (par défaut le plus récent ; cliquer un mois
-//      dans la carte trimestre change le mois affiché)
+//      dans la carte trimestre change le mois affiché) ; la tuile « Payé »
+//      porte un bouton violet « Payer X € » quand un solde reste dû pour ce
+//      mois -> défilement direct vers le QR et les infos de virement ;
+//      la tuile « Reste à payer » du récapitulatif fait de même (FIFO)
 //   2. Carte « Trimestre en cours » : lignes de mois CLIQUABLES (coche =
 //      déclaré), total du trimestre
 //   3. « Paiements du trimestre » : à payer / déjà payé / reste à payer
@@ -88,8 +92,7 @@ const labels = {
     hideQrBtn: "Masquer le code QR",
     qrOtherDevice:
       "Ce code se scanne avec l'application bancaire d'un autre appareil.",
-    duesBanner: "Il vous reste {amount} à payer ce trimestre.",
-    payNow: "Payer maintenant",
+    payAmountBtn: "Payer {amount}",
     retry: "Réessayer",
     declaredOk:
       "Votre déclaration de {month} est enregistrée. Contribution : {amount}.",
@@ -193,8 +196,7 @@ const labels = {
     showQrBtn: "QR-code tonen",
     hideQrBtn: "QR-code verbergen",
     qrOtherDevice: "Deze code scant u met de bankapp van een ander toestel.",
-    duesBanner: "U moet dit kwartaal nog {amount} betalen.",
-    payNow: "Nu betalen",
+    payAmountBtn: "{amount} betalen",
     retry: "Opnieuw proberen",
     declaredOk:
       "Uw aangifte voor {month} is geregistreerd. Bijdrage: {amount}.",
@@ -297,8 +299,7 @@ const labels = {
     showQrBtn: "Show QR code",
     hideQrBtn: "Hide QR code",
     qrOtherDevice: "Scan this code with the banking app on another device.",
-    duesBanner: "You still have {amount} to pay this quarter.",
-    payNow: "Pay now",
+    payAmountBtn: "Pay {amount}",
     retry: "Try again",
     declaredOk:
       "Your declaration for {month} has been saved. Contribution: {amount}.",
@@ -472,8 +473,10 @@ function parseAmount(raw: string): number | null {
 type PayStatus = "unpaid" | "partial" | "paid" | "overdue";
 
 /** Date limite de paiement d'un mois déclaré.
- *  ⚠ RÈGLE PAR DÉFAUT — À CONFIRMER PAR LE MÉTIER : la contribution d'un
- *  mois est due pour la FIN DU MOIS SUIVANT (ex. avril -> 31 mai).
+ *  RÈGLE MÉTIER (confirmée le 10/7/2026) : la contribution d'un mois est
+ *  due pour la FIN DU MOIS SUIVANT la clôture du mois (ex. avril -> 31 mai).
+ *  Échéance dépassée = mise en évidence UNIQUEMENT (couleur + libellé) ;
+ *  aucune action ni blocage : le paiement reste possible à l'identique.
  *  L'année est déduite du trimestre applicatif (décalé, §5.16 de l'état
  *  projet) : si le trimestre affiché est postérieur au trimestre calendaire
  *  d'aujourd'hui, il appartient à l'année précédente (ex. T4 en janvier). */
@@ -718,20 +721,25 @@ function SectionTitle({
  *  tone : "highlight" = violet, "ok" = vert, "partial" = ambre (acompte),
  *  "overdue" = rouge (échéance dépassée) — le sous-libellé TEXTE accompagne
  *  toujours la couleur (jamais la couleur seule).
- *  onClick : rend la tuile cliquable (bouton), ex. « Reste à payer »
- *  -> défilement vers la carte de paiement. */
+ *  onClick : rend la tuile ENTIÈRE cliquable (bouton), ex. « Reste à payer »
+ *  -> défilement vers la carte de paiement.
+ *  action : bouton violet plein INTÉGRÉ à la tuile (ex. « Payer 245,00 € »
+ *  sur la tuile « Payé »). Ignoré si onClick est fourni (pas de bouton
+ *  imbriqué dans un bouton). */
 function DataTile({
   label,
   value,
   tone,
   sub,
   onClick,
+  action,
 }: {
   label: string;
   value: string;
   tone?: "highlight" | "ok" | "partial" | "overdue";
   sub?: string;
   onClick?: () => void;
+  action?: { label: string; onClick: () => void };
 }) {
   const className = `data-tile${tone ? ` ${tone}` : ""}`;
   const inner = (
@@ -753,7 +761,20 @@ function DataTile({
     );
   }
 
-  return <div className={className}>{inner}</div>;
+  return (
+    <div className={className}>
+      {inner}
+      {action && (
+        <button
+          type="button"
+          className="btn btn-primary btn-tile"
+          onClick={action.onClick}
+        >
+          {action.label}
+        </button>
+      )}
+    </div>
+  );
 }
 
 /** Carte trimestre : une ligne par mois + total.
@@ -1339,6 +1360,12 @@ export default function Portail() {
   const [status, setStatus] = useState<Status>("loading");
   const [current, setCurrent] = useState<MeResponse | null>(null);
 
+  // Identifiant stable du compte connecté (= oid pour AAD, via /.auth/me) :
+  // clé de la pastille d'activation « une seule fois par appareil ».
+  const [principalId, setPrincipalId] = useState<string | null>(null);
+  // Pastille « Votre accès est activé » : première visite réussie uniquement.
+  const [showActivated, setShowActivated] = useState(false);
+
   // Mois affiché dans les tuiles (par défaut : le plus récent).
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
 
@@ -1380,6 +1407,24 @@ export default function Portail() {
       block: "start",
     });
   }, [payScrollTick]);
+
+  // Pastille « Votre accès est activé » : affichée à la PREMIÈRE visite
+  // réussie de ce compte sur cet appareil (= l'activation vient d'aboutir),
+  // puis mémorisée en localStorage. Les visites suivantes récupèrent
+  // l'espace en haut de page pour le contenu utile.
+  useEffect(() => {
+    if (status !== "ready" || !principalId) return;
+    const key = `ra-activated-${principalId}`;
+    try {
+      if (!window.localStorage.getItem(key)) {
+        window.localStorage.setItem(key, "1");
+        setShowActivated(true);
+      }
+    } catch {
+      // Stockage local indisponible (navigation privée stricte) :
+      // on n'affiche pas la pastille plutôt que de l'afficher à chaque fois.
+    }
+  }, [status, principalId]);
 
   // --- Familles : plusieurs profils sur un même compte -----------------------
   // profiles : la liste des personnes liées au compte (null = pas encore su).
@@ -1463,7 +1508,7 @@ export default function Portail() {
         // 1) Qui est connecté ? (fourni par Azure Static Web Apps)
         const authRes = await fetch("/.auth/me");
         const authJson = (await authRes.json()) as {
-          clientPrincipal: { userDetails?: string } | null;
+          clientPrincipal: { userDetails?: string; userId?: string } | null;
         };
 
         // Pas connecté -> redirection vers la connexion Microsoft
@@ -1471,6 +1516,12 @@ export default function Portail() {
           window.location.href =
             "/.auth/login/aad?post_login_redirect_uri=/portail";
           return;
+        }
+
+        // userId = oid pour AAD (cf. apprentissages du projet) : sert de
+        // clé pour n'afficher la pastille d'activation qu'une seule fois.
+        if (!cancelled) {
+          setPrincipalId(authJson.clientPrincipal.userId ?? null);
         }
 
         // 2) Récupérer SES données (filtrage fait côté serveur).
@@ -1570,6 +1621,10 @@ export default function Portail() {
     setPayScrollTick((n) => n + 1);
   };
 
+  // Défilement vers la carte de paiement du mois AFFICHÉ (sans changer de
+  // mois) : utilisé par le bouton « Payer X € » de la tuile « Payé ».
+  const scrollToPayment = () => setPayScrollTick((n) => n + 1);
+
   // Statut de paiement du TRIMESTRE : code couleur PARTAGÉ entre le bandeau
   // du haut et la tuile « Reste à payer » (toujours synchronisés).
   // vert = tout payé · rouge = au moins une échéance dépassée ·
@@ -1608,9 +1663,6 @@ export default function Portail() {
     ).toLowerCase()})`;
   };
 
-  // Bandeau « il vous reste X à payer » : texte autour du montant en gras.
-  const [duesBefore, duesAfter] = t.duesBanner.split("{amount}");
-
   return (
     <>
       <header className="app-header">
@@ -1647,10 +1699,12 @@ export default function Portail() {
         <p className="page-subtitle">{t.intro}</p>
 
         <div className="card">
-          <div className="alert alert-success alert-flex" role="status">
-            <CheckIcon />
-            <span>{t.activated}</span>
-          </div>
+          {showActivated && (
+            <div className="alert alert-success alert-flex" role="status">
+              <CheckIcon />
+              <span>{t.activated}</span>
+            </div>
+          )}
 
           {/* Famille : rappel du profil consulté + changement de personne.
               Visible dans les deux vues (trimestre en cours et précédent). */}
@@ -1770,28 +1824,6 @@ export default function Portail() {
                       </div>
                     )}
 
-                  {/* 0. Bandeau « reste à payer » + accès direct au paiement.
-                        Fond violet clair (jamais rouge : un solde dû est
-                        normal, rien d'alarmant — charte Fedasil). */}
-                  {remaining > 0.005 && current.payment && (
-                    <div className="pay-cta" role="status">
-                      <span className="pay-cta-text">
-                        {duesBefore}
-                        <strong className={`tone-${quarterStatus}`}>
-                          {euro(remaining, language)}
-                        </strong>
-                        {duesAfter}
-                      </span>
-                      <button
-                        type="button"
-                        className="btn btn-primary"
-                        onClick={goToPayment}
-                      >
-                        {t.payNow}
-                      </button>
-                    </div>
-                  )}
-
                   {/* 1. Mois non déclaré sélectionné OU correction en cours
                         -> formulaire ; sinon tuiles du mois affiché */}
                   {isMissingSelected && selectedMonth !== null ? (
@@ -1870,6 +1902,17 @@ export default function Portail() {
                               sub={
                                 displayedStatus
                                   ? stateLabel(displayedStatus)
+                                  : undefined
+                              }
+                              action={
+                                displayedDue > 0.005 && current.payment
+                                  ? {
+                                      label: t.payAmountBtn.replace(
+                                        "{amount}",
+                                        euro(displayedDue, language)
+                                      ),
+                                      onClick: scrollToPayment,
+                                    }
                                   : undefined
                               }
                             />

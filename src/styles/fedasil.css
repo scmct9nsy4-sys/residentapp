@@ -781,40 +781,9 @@ button.quarter-row:hover {
 
 /* --- 12bis. Portail : ergonomie mobile du paiement ---------------------------- */
 
-/* Bandeau « il vous reste X € à payer » + bouton « Payer maintenant ».
-   Fond violet clair : un solde dû est NORMAL, jamais alarmant (pas de rouge
-   sur un élément qui appelle une action — charte Fedasil). */
-.pay-cta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  background: var(--violet-8);
-  border: 1.5px solid var(--violet-25);
-  border-radius: var(--radius);
-  padding: 14px 16px;
-  margin-bottom: 4px;
-}
-
-.pay-cta .pay-cta-text strong {
-  color: var(--violet);
-  font-size: 1.05rem;
-}
-
-/* Sur mobile : texte au-dessus, bouton pleine largeur (pouce). */
-@media (max-width: 480px) {
-  .pay-cta {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  .pay-cta .btn {
-    width: 100%;
-  }
-}
-
-/* Cible du défilement « Payer maintenant » : petit dégagement en haut
-   pour que le titre de section ne colle pas au bord de l'écran. */
+/* Cible du défilement vers le paiement (boutons « Payer X € » de la tuile
+   « Payé » et tuile « Reste à payer ») : petit dégagement en haut pour que
+   le titre de section ne colle pas au bord de l'écran. */
 .pay-anchor {
   scroll-margin-top: 16px;
 }
@@ -1173,18 +1142,15 @@ button.data-tile .tile-arrow {
   line-height: 1;
 }
 
-/* Le montant du bandeau « Payer maintenant » suit le MÊME code couleur que
-   la tuile « Reste à payer » (surcharges à spécificité suffisante). */
-.pay-cta .pay-cta-text strong.tone-partial {
-  color: var(--jaune-texte);
-}
-
-.pay-cta .pay-cta-text strong.tone-paid {
-  color: var(--vert);
-}
-
-.pay-cta .pay-cta-text strong.tone-overdue {
-  color: var(--rouge-fonce);
+/* Bouton « Payer X € » intégré à la tuile « Payé » du mois affiché :
+   violet plein (interaction — jamais rouge), pleine largeur de la tuile,
+   défilement direct vers le QR et les informations de virement. */
+.data-tile .btn-tile {
+  width: 100%;
+  margin-top: 10px;
+  min-height: 44px;
+  padding: 8px 16px;
+  font-size: 0.9rem;
 }
 
 /* Montant libre dans la carte de paiement */
