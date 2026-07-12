@@ -26,7 +26,8 @@
           "name": "Title",
           "type": "text",
           "documentOnly": true,
-          "note": "Colonne intégrée SharePoint. Contient le NUMÉRO NATIONAL (SP_NATIONALID_FIELD=Title). À confirmer en ouvrant une ligne."
+          "indexed": true,
+          "note": "Colonne intégrée SharePoint. Contient le NUMÉRO NATIONAL (SP_NATIONALID_FIELD=Title). INDEXÉE : /api/pre-inscription cherche l'éligibilité par NN."
         },
         {
           "name": "FirstName",
@@ -50,12 +51,14 @@
           "name": "FedasilNumber",
           "type": "text",
           "documentOnly": true,
-          "note": "Clé maîtresse (FA). Unique et permanente. Saisie par le staff."
+          "indexed": true,
+          "note": "Clé maîtresse (FA). Unique et permanente. Saisie par le staff. INDEXÉE : jointure de toutes les autres listes."
         },
         {
           "name": "EntraOid",
           "type": "text",
-          "note": "SEULE colonne à créer. oid du compte invité Entra. Écrit par /api/pre-inscription (et auto-réparation dans /api/me et /api/declare). Plusieurs lignes peuvent porter le même oid (familles). Variable SP_RESIDENT_OID_FIELD=EntraOid."
+          "indexed": true,
+          "note": "SEULE colonne à créer. oid du compte invité Entra. Écrit par /api/pre-inscription (et auto-réparation dans /api/me et /api/declare). Plusieurs lignes peuvent porter le même oid (familles). Variable SP_RESIDENT_OID_FIELD=EntraOid. INDEXÉE (13/7/2026) : c'est LE chemin critique du login — /api/me résout l'identité par oid à CHAQUE connexion. Sans index, fetch-all des ~1900 résidents à chaque appel."
         }
       ]
     },
@@ -80,8 +83,8 @@
       "displayName": "KB-Cumul T4",
       "description": "Déclarations mensuelles du trimestre 4 (année implicite — gouvernance de l'année : voir option 2 de la feuille de route). Une ligne = un mois pour un FA (totaux).",
       "columns": [
-        { "name": "FedasilNumber", "type": "text", "documentOnly": true, "note": "FA (type texte confirmé par sp:inspect -> SP_FA_IS_NUMBER reste false)." },
-        { "name": "Month", "type": "number", "documentOnly": true },
+        { "name": "FedasilNumber", "type": "text", "documentOnly": true, "indexed": true, "note": "FA (type texte confirmé par sp:inspect -> SP_FA_IS_NUMBER reste false). INDEXÉE (13/7/2026) : chemin critique du portail résident (Me.ts / Declare.ts cherchent les lignes d'UN résident). Sans index, $filter échoue silencieusement -> fetch-all des ~5000 lignes du trimestre. ⚠ SEUIL : un index ne peut être posé que si la liste compte MOINS de 5000 éléments. À ~1700 déclarations/mois, la liste atteint le seuil au 3e mois du trimestre : l'index se pose donc sur une liste VIDE, juste après la rotation (voir PROCEDURE-BASCULE-TRIMESTRE.md)." },
+        { "name": "Month", "type": "number", "documentOnly": true, "note": "Mois 1-12. NON indexée volontairement : l'app staff lit Soldes (indexée), pas les KB-Cumul." },
         { "name": "NetSalary", "type": "number", "documentOnly": true },
         { "name": "GrossSalary", "type": "number", "documentOnly": true },
         { "name": "Contribution", "type": "number", "documentOnly": true },
@@ -94,7 +97,7 @@
       "displayName": "KB-Cumul T1",
       "description": "Déclarations mensuelles du trimestre 1 (mêmes colonnes que T4). Colonnes CRÉABLES : sur un tenant de test elles sont créées, sur le tenant Fedasil (où la liste existe) elles sont seulement vérifiées.",
       "columns": [
-        { "name": "FedasilNumber", "type": "text" },
+        { "name": "FedasilNumber", "type": "text", "indexed": true, "note": "INDEXÉE : voir la note de KB-Cumul T4 (index posable uniquement sous 5000 éléments -> après rotation)." },
         { "name": "Month", "type": "number" },
         { "name": "NetSalary", "type": "number" },
         { "name": "GrossSalary", "type": "number" },
@@ -108,7 +111,7 @@
       "displayName": "KB-Cumul T2",
       "description": "Déclarations mensuelles du trimestre 2 (mêmes colonnes que T4).",
       "columns": [
-        { "name": "FedasilNumber", "type": "text" },
+        { "name": "FedasilNumber", "type": "text", "indexed": true, "note": "INDEXÉE : voir la note de KB-Cumul T4 (index posable uniquement sous 5000 éléments -> après rotation)." },
         { "name": "Month", "type": "number" },
         { "name": "NetSalary", "type": "number" },
         { "name": "GrossSalary", "type": "number" },
@@ -122,7 +125,7 @@
       "displayName": "KB-Cumul T3",
       "description": "Déclarations mensuelles du trimestre 3 (mêmes colonnes que T4).",
       "columns": [
-        { "name": "FedasilNumber", "type": "text" },
+        { "name": "FedasilNumber", "type": "text", "indexed": true, "note": "INDEXÉE : voir la note de KB-Cumul T4 (index posable uniquement sous 5000 éléments -> après rotation)." },
         { "name": "Month", "type": "number" },
         { "name": "NetSalary", "type": "number" },
         { "name": "GrossSalary", "type": "number" },
@@ -134,7 +137,7 @@
     },
     {
       "displayName": "KB-Paiements",
-      "description": "Paiements bancaires (import CSV hebdomadaire de la banque). Une ligne = UN virement ; un même mois peut être payé en plusieurs virements portant la même communication structurée (Paid dans KB-Cumul = le CUMUL). ⚠ STRUCTURE DE TEST : la liste réelle existe sur le tenant Fedasil — relever ses noms internes avec sp:inspect et ALIGNER ce schéma avant tout provisioning là-bas.",
+      "description": "Paiements bancaires (import CSV hebdomadaire de la banque). Une ligne = UN virement ; un même mois peut être payé en plusieurs virements portant la même communication structurée (Paid dans KB-Cumul = le CUMUL). ⚠ STRUCTURE DE TEST : la liste réelle existe sur le tenant Fedasil — relever ses noms internes avec sp:inspect et ALIGNER ce schéma avant tout provisioning là-bas. ⚠ CROISSANCE ILLIMITÉE (constat du 13/7/2026, simulation) : c'est la SEULE liste qui ne tourne jamais — ~1500 virements/mois, soit ~18000 lignes/an, sans plafond. Les index posés ici (FedasilNumber, Status) DOIVENT donc l'être MAINTENANT, tant que la liste est sous 5000 éléments : au-delà, SharePoint refuse de créer un index. Sans purge ni archivage, cette liste est le premier candidat à la migration SQL (§10).",
       "columns": [
         {
           "name": "Title",
@@ -148,13 +151,14 @@
         { "name": "FreeCom", "type": "note", "note": "Communication libre (paiements manuels historiques) — file d'attente du lettrage manuel." },
         { "name": "CounterpartyName", "type": "text", "note": "Nom du donneur d'ordre (aide au lettrage manuel)." },
         { "name": "CounterpartyIBAN", "type": "text", "note": "IBAN du donneur d'ordre (aide au lettrage manuel)." },
-        { "name": "FedasilNumber", "type": "text", "note": "FA résolu après lettrage (vide tant que non imputé)." },
+        { "name": "FedasilNumber", "type": "text", "indexed": true, "note": "FA résolu après lettrage (vide tant que non imputé). INDEXÉE : la fiche 360° liste les virements d'UN résident." },
         { "name": "Month", "type": "number", "note": "Mois imputé après lettrage." },
         {
           "name": "Status",
           "type": "choice",
           "choices": ["À traiter", "Imputé", "Anomalie"],
-          "note": "État du lettrage : « À traiter » à l'import ; « Imputé » quand reporté dans Paid (KB-Cumul) ; « Anomalie » si irrésoluble (comm invalide, montant incohérent…)."
+          "indexed": true,
+          "note": "État du lettrage : « À traiter » à l'import ; « Imputé » quand reporté dans Paid (KB-Cumul) ; « Anomalie » si irrésoluble (comm invalide, montant incohérent…). INDEXÉE : c'est LA requête du module 3 (file de lettrage : Status = « À traiter »)."
         }
       ]
     },
