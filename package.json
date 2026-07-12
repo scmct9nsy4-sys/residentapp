@@ -14,7 +14,8 @@
     "sp:inspect": "tsx scripts/provision-sharepoint.ts inspect",
     "sp:provision": "tsx scripts/provision-sharepoint.ts provision",
     "sp:rotate": "tsx scripts/rotate-quarter.ts",
-    "sp:soldes": "tsx scripts/snapshot-soldes.ts"
+    "sp:soldes": "tsx scripts/snapshot-soldes.ts",
+    "sp:seed": "tsx scripts/seed-simulation.ts"
   },
   "dependencies": {
     "qrcode": "^1.5.4",
