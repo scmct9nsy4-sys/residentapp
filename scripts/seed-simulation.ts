@@ -58,6 +58,25 @@
  *  GRAPH_CLIENT_ID, GRAPH_CLIENT_SECRET, SP_SITE_HOSTNAME, SP_SITE_PATH),
  *  comme provision-sharepoint.ts, rotate-quarter.ts et snapshot-soldes.ts.
  *  Écritures par lots Graph $batch (20 opérations/requête) avec reprise 429.
+ *
+ *  v2 (12/7/2026) — correctifs après le premier run à grande échelle :
+ *    - le jeton Graph est RAFRAÎCHI automatiquement (toutes les ~40 min et
+ *      sur 401) : un run long ne meurt plus à l'expiration du jeton ;
+ *    - 401 est désormais traité comme une erreur de REPRISE, pas définitive ;
+ *    - les FA99 créés lors d'un run précédent ne sont plus relus depuis
+ *      Residents List (ils gardaient sinon un second profil parasite) ;
+ *    - progression : total exact affiché en fin de chaque phase ;
+ *    - dry-run : détail des 5 premières lignes Soldes divergentes.
+ *
+ *  v3 (12/7/2026) — STABILITÉ de la génération entre passages :
+ *    - le NN fictif a son propre flux aléatoire : la présence du NN dans
+ *      Residents List (créé à un run précédent) ne décale plus le profil
+ *      du résident — la génération est désormais un vrai point fixe ;
+ *    - les valeurs réelles à >2 décimales sont arrondies avant recopie
+ *      dans Soldes (même convention round2 que sp:soldes).
+ *    ⚠ Les données écrites par la v1 divergent de ce point fixe pour les FA
+ *    qui manquaient dans Residents List : pour un jeu 100 % cohérent,
+ *    PURGER puis regénérer une fois avec cette version.
  * ============================================================================ */
 
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
@@ -110,6 +129,17 @@ function requireSetting(values: Record<string, string>, key: string): string {
 // ---------- Client Graph minimal (+ $batch) ----------
 
 let graphToken = "";
+let graphCfg: Record<string, string> = {};
+let tokenIssuedAt = 0;
+const TOKEN_MAX_AGE_MS = 40 * 60 * 1000; // rafraîchi bien avant l'expiration (~60 min)
+
+// Garantit un jeton frais — indispensable sur les runs longs (40 000+ ops).
+async function ensureToken(force = false): Promise<void> {
+  if (force || !graphToken || Date.now() - tokenIssuedAt > TOKEN_MAX_AGE_MS) {
+    graphToken = await getGraphToken(graphCfg);
+    tokenIssuedAt = Date.now();
+  }
+}
 
 async function getGraphToken(cfg: Record<string, string>): Promise<string> {
   const tenantId = requireSetting(cfg, "TENANT_ID");
@@ -135,6 +165,7 @@ async function getGraphToken(cfg: Record<string, string>): Promise<string> {
 }
 
 async function graphGet<T>(url: string): Promise<T> {
+  await ensureToken();
   const full = url.startsWith("https://")
     ? url
     : `https://graph.microsoft.com/v1.0${url}`;
@@ -155,14 +186,17 @@ type BatchOp = {
   label: string; // pour les messages d'erreur
 };
 
-// Exécute des opérations d'écriture par lots de 20, avec reprise sur 429/503.
+// Exécute des opérations d'écriture par lots de 20.
+// Reprise automatique : 429/503 (limitation) ET 401 (jeton expiré -> rafraîchi).
 async function graphBatch(ops: BatchOp[], phase: string): Promise<number> {
   let queue = [...ops];
   let done = 0;
   let failures = 0;
-  for (let pass = 1; pass <= 4 && queue.length > 0; pass++) {
+  let chunkCount = 0;
+  for (let pass = 1; pass <= 5 && queue.length > 0; pass++) {
     const retry: BatchOp[] = [];
     for (let i = 0; i < queue.length; i += 20) {
+      await ensureToken(); // jeton frais garanti sur toute la durée du run
       const chunk = queue.slice(i, i + 20);
       const payload = {
         requests: chunk.map((op, idx) => ({
@@ -182,6 +216,12 @@ async function graphBatch(ops: BatchOp[], phase: string): Promise<number> {
         },
         body: JSON.stringify(payload),
       });
+      if (res.status === 401) {
+        console.log("   … jeton expiré, rafraîchissement et reprise du lot");
+        await ensureToken(true);
+        i -= 20; // rejoue le même lot
+        continue;
+      }
       if (!res.ok) {
         const text = await res.text();
         fail(`Graph $batch (${phase}) -> statut ${res.status}\n${text}`);
@@ -190,6 +230,7 @@ async function graphBatch(ops: BatchOp[], phase: string): Promise<number> {
         responses: Array<{ id: string; status: number; headers?: Record<string, string>; body?: unknown }>;
       };
       let waitSec = 0;
+      let sawExpired = false;
       for (const r of json.responses) {
         const op = chunk[Number(r.id)];
         if (r.status >= 200 && r.status < 300) {
@@ -197,6 +238,9 @@ async function graphBatch(ops: BatchOp[], phase: string): Promise<number> {
         } else if (r.status === 429 || r.status === 503) {
           retry.push(op);
           waitSec = Math.max(waitSec, Number(r.headers?.["Retry-After"] ?? "5"));
+        } else if (r.status === 401) {
+          retry.push(op); // jeton expiré au niveau de l'opération : REPRISE
+          sawExpired = true;
         } else {
           failures++;
           console.log(
@@ -204,24 +248,30 @@ async function graphBatch(ops: BatchOp[], phase: string): Promise<number> {
           );
         }
       }
+      if (sawExpired) await ensureToken(true);
       if (waitSec > 0) {
         console.log(`   … limitation Graph, pause ${waitSec}s`);
         await new Promise((r) => setTimeout(r, waitSec * 1000));
       } else {
         await new Promise((r) => setTimeout(r, 250)); // rythme prudent
       }
-      if ((done + failures) % 200 < 20) {
+      chunkCount++;
+      if (chunkCount % 10 === 0) {
         console.log(`   ${done}/${ops.length} écrit(s)…`);
       }
     }
     queue = retry;
+    if (queue.length > 0) {
+      console.log(`   … passe ${pass} terminée, ${queue.length} opération(s) à reprendre`);
+    }
   }
   if (queue.length > 0) {
-    console.log(`   ⚠ ${queue.length} opération(s) abandonnée(s) après 4 tentatives (${phase}).`);
+    console.log(`   ⚠ ${queue.length} opération(s) abandonnée(s) après 5 tentatives (${phase}).`);
   }
   if (failures > 0) {
     console.log(`   ⚠ ${failures} échec(s) définitif(s) dans la phase « ${phase} » (voir ci-dessus).`);
   }
+  console.log(`   Phase « ${phase} » : ${done}/${ops.length} écrit(s), ${failures} échec(s), ${queue.length} abandonnée(s).`);
   return done;
 }
 
@@ -483,7 +533,10 @@ function buildPopulation(
   const residentByFa = new Map<string, ListItem>();
   for (const r of residents) {
     const fa = String(r.fields.FedasilNumber ?? "").trim();
-    if (fa) residentByFa.set(fa, r);
+    // Les FA99 créés lors d'un run PRÉCÉDENT ne sont pas relus ici : ils sont
+    // regénérés à l'identique par la boucle des arrivées fictives ci-dessous
+    // (sinon ils recevraient un second profil parasite avec une autre graine).
+    if (fa && !fa.startsWith(SIM_FA_PREFIX)) residentByFa.set(fa, r);
   }
   for (const row of realT4Rows) {
     const fa = String(row.fields.FedasilNumber ?? "").trim();
@@ -513,7 +566,11 @@ function buildPopulation(
     }
     out.push({
       fa,
-      nn: info.nn || makeFakeNN(rng),
+      // NN : flux aléatoire DÉDIÉ. S'il partageait le rng du profil, la
+      // présence/absence du NN dans Residents List (créé au run précédent)
+      // décalerait tous les tirages suivants -> données différentes à chaque
+      // passage (bug découvert au premier run à grande échelle).
+      nn: info.nn || makeFakeNN(mulberry32(hash32(`nn:${seed}:${fa}`))),
       first,
       last,
       isNew: false,
@@ -548,7 +605,10 @@ function buildPopulation(
       suppressedQuarters: new Set(),
     });
   }
-  return out;
+  // Garde-fou : jamais deux profils pour le même FA (le premier gagne).
+  const dedup = new Map<string, SimResident>();
+  for (const r of out) if (!dedup.has(r.fa)) dedup.set(r.fa, r);
+  return [...dedup.values()];
 }
 
 // Génère l'activité mensuelle d'un résident (déterministe).
@@ -570,7 +630,7 @@ function buildMonths(
     // respecte telle quelle — elle nourrit Soldes et la base DMFA.
     const realRow = ym >= 202510 && ym <= 202512 ? realRowsByFaMonth.get(`${r.fa}|${month}`) : undefined;
     if (realRow) {
-      const declaredNet = toNumber(realRow.NetSalary);
+      const declaredNet = round2(toNumber(realRow.NetSalary));
       const trueNet = r.bcss === "sous" ? round2(declaredNet / 0.65) : declaredNet;
       out.push({
         fa: r.fa,
@@ -578,7 +638,7 @@ function buildMonths(
         trueNet,
         declared: true,
         declaredNet,
-        declaredGross: toNumber(realRow.GrossSalary),
+        declaredGross: round2(toNumber(realRow.GrossSalary)),
         contribution: round2(toNumber(realRow.Contribution)),
         paid: round2(toNumber(realRow.Paid)),
         structuredCom: String(realRow.StructuredCom ?? "").trim() || buildStructuredCom(r.fa, month),
@@ -835,7 +895,8 @@ async function main(): Promise<void> {
   if (!Number.isFinite(seed)) fail("Graine invalide (--seed=nombre).");
 
   const cfg = loadSettings();
-  graphToken = await getGraphToken(cfg);
+  graphCfg = cfg;
+  await ensureToken(true);
   const siteId = await getSiteId(cfg);
 
   // Résolution des 7 listes.
@@ -1025,14 +1086,22 @@ async function main(): Promise<void> {
           label: `Soldes ${title}`,
         });
       } else {
-        const same =
-          round2(toNumber(existing.fields.Contribution)) === fields.Contribution &&
-          round2(toNumber(existing.fields.Paid)) === fields.Paid &&
-          round2(toNumber(existing.fields.NetSalary)) === fields.NetSalary &&
-          String(existing.fields.PayStatus ?? "") === fields.PayStatus;
-        if (same) {
+        const diffs: string[] = [];
+        const numDiff = (k: "Contribution" | "Paid" | "NetSalary" | "GrossSalary" | "Balance") => {
+          const cur = round2(toNumber(existing.fields[k]));
+          if (cur !== fields[k]) diffs.push(`${k} ${cur} -> ${fields[k]}`);
+        };
+        numDiff("Contribution"); numDiff("Paid"); numDiff("NetSalary");
+        numDiff("GrossSalary"); numDiff("Balance");
+        if (String(existing.fields.PayStatus ?? "") !== fields.PayStatus) {
+          diffs.push(`PayStatus ${String(existing.fields.PayStatus ?? "∅")} -> ${fields.PayStatus}`);
+        }
+        if (diffs.length === 0) {
           soldesSkip++;
         } else {
+          if (dryRun && soldesUpdate < 5) {
+            console.log(`   ~ [dry-run] Soldes ${title} diverge : ${diffs.join(" · ")}`);
+          }
           soldesUpdate++;
           opsSoldes.push({
             method: "PATCH",
