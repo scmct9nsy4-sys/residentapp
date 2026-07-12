@@ -1168,3 +1168,23 @@ button.data-tile .tile-arrow {
   font-weight: 600;
   color: var(--gris);
 }
+
+/* Icône d'état de paiement par MOIS dans la carte trimestre : forme + couleur,
+   avec libellé pour lecteurs d'écran (jamais la couleur seule).
+   Cercle vide violet = à payer · demi-cercle ambre = acompte versé ·
+   coche verte = payé · point d'exclamation rouge = échéance dépassée. */
+.quarter-row .q-check.q-status-unpaid {
+  color: var(--violet);
+}
+
+.quarter-row .q-check.q-status-partial {
+  color: var(--jaune-texte);
+}
+
+.quarter-row .q-check.q-status-paid {
+  color: var(--vert);
+}
+
+.quarter-row .q-check.q-status-overdue {
+  color: var(--rouge-fonce);
+}

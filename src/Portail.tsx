@@ -13,8 +13,10 @@
 //      porte un bouton violet « Payer X € » quand un solde reste dû pour ce
 //      mois -> défilement direct vers le QR et les infos de virement ;
 //      la tuile « Reste à payer » du récapitulatif fait de même (FIFO)
-//   2. Carte « Trimestre en cours » : lignes de mois CLIQUABLES (coche =
-//      déclaré), total du trimestre
+//   2. Carte « Trimestre en cours » : lignes de mois CLIQUABLES, chacune
+//      avec une icône d'état de paiement (forme + couleur : cercle violet =
+//      à payer, demi-cercle ambre = acompte, coche verte = payé, point
+//      d'exclamation rouge = échéance dépassée), total du trimestre
 //   3. « Paiements du trimestre » : à payer / déjà payé / reste à payer
 //      (l'information principale pour le résident)
 //   4. Bouton vers le trimestre précédent (/api/me?quarter=previous)
@@ -513,6 +515,14 @@ function toneForStatus(
   return "highlight";
 }
 
+/** Libellé texte d'un statut de paiement (jamais la couleur seule). */
+function stateLabelFor(t: (typeof labels)[Language], s: PayStatus): string {
+  if (s === "paid") return t.statePaid;
+  if (s === "partial") return t.statePartial;
+  if (s === "overdue") return t.stateOverdue;
+  return t.stateUnpaid;
+}
+
 /** Contenu d'un QR EPC (« SEPA Credit Transfer », norme EPC069-12).
  *  Reconnu par les applications bancaires belges (ING, KBC, Belfius…).
  *  La communication structurée belge (+++...+++) se place dans le champ
@@ -610,6 +620,71 @@ function CheckIcon({ size = 22 }: { size?: number }) {
     >
       <circle cx="12" cy="12" r="10" />
       <path d="M8 12.5l2.5 2.5L16 9" />
+    </svg>
+  );
+}
+
+/** Icône d'état de paiement d'un mois : la FORME distingue les états en
+ *  plus de la couleur (daltonisme, écrans de faible qualité) :
+ *  cercle vide = à payer · demi-cercle plein = acompte versé ·
+ *  coche = payé · point d'exclamation = échéance dépassée. */
+function PayStatusIcon({
+  status,
+  size = 18,
+}: {
+  status: PayStatus;
+  size?: number;
+}) {
+  if (status === "paid") return <CheckIcon size={size} />;
+
+  if (status === "partial") {
+    return (
+      <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        aria-hidden="true"
+      >
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 2a10 10 0 0 1 0 20Z" fill="currentColor" stroke="none" />
+      </svg>
+    );
+  }
+
+  if (status === "overdue") {
+    return (
+      <svg
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        aria-hidden="true"
+      >
+        <circle cx="12" cy="12" r="10" />
+        <line x1="12" y1="7" x2="12" y2="13" />
+        <circle cx="12" cy="16.5" r="1.2" fill="currentColor" stroke="none" />
+      </svg>
+    );
+  }
+
+  // "unpaid" : cercle vide (état normal, rien d'alarmant)
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="10" />
     </svg>
   );
 }
@@ -842,6 +917,9 @@ function QuarterCard({
           );
         }
 
+        // État de paiement du mois : icône (forme + couleur) en bout de ligne.
+        const st = monthPayStatus(decl, data.quarter);
+
         const content = (
           <>
             <span className="q-month">{monthName(month, lang)}</span>
@@ -849,8 +927,12 @@ function QuarterCard({
               {t.netShort} {euro(decl.netSalary, lang)} · {t.contribShort}{" "}
               {euro(decl.contribution, lang)}
             </span>
-            <span className="q-check" role="img" aria-label={t.declared}>
-              <CheckIcon size={18} />
+            <span
+              className={`q-check q-status-${st}`}
+              role="img"
+              aria-label={`${t.declared} · ${stateLabelFor(t, st)}`}
+            >
+              <PayStatusIcon status={st} size={18} />
             </span>
           </>
         );
@@ -1645,14 +1727,7 @@ export default function Portail() {
     displayed && current ? monthPayStatus(displayed, current.quarter) : null;
 
   // Libellé texte accompagnant chaque statut (jamais la couleur seule).
-  const stateLabel = (s: PayStatus): string =>
-    s === "paid"
-      ? t.statePaid
-      : s === "partial"
-        ? t.statePartial
-        : s === "overdue"
-          ? t.stateOverdue
-          : t.stateUnpaid;
+  const stateLabel = (s: PayStatus): string => stateLabelFor(t, s);
 
   const quarterTitle = (data: MeResponse | null, base: string): string => {
     if (!data || data.quarter === null) return base;
