@@ -1,6 +1,6 @@
 # ÉTAT DU PROJET — ResidentApp (Fedasil)
 
-**Version 5 — 10 juillet 2026** (remplace la v4 du 9 juillet 2026)
+**Version 7 — 12 juillet 2026** (remplace la v6 du même jour — session « liste Soldes »)
 
 ---
 
@@ -19,7 +19,19 @@ aux résidents (public multilingue FR/NL/EN, invités via Entra B2B) de :
    de paie additionnées, contribution calculée automatiquement côté serveur).
 
 **Statut : parcours complet VALIDÉ EN PRODUCTION de bout en bout.**
-Depuis la v4 : le **sélecteur de profils familiaux** est implémenté et validé
+Depuis la v5 : **session ergonomie complète du 12/7**
+(CHANGELOG-session-2026-07-12.md) — carte de paiement adaptée au **mobile**
+(champs copiables d'abord, QR replié sur tactile), **statuts de paiement
+colorés** avec règle d'échéance CONFIRMÉE (§5.18), boutons de paiement
+intégrés aux tuiles, **montant libre** (acomptes), pastille d'activation
+affichée une seule fois, aide « fiche de paie », pictogrammes de section,
+boutons « Réessayer », session expirée → reconnexion, **NN formaté à la
+volée + contrôle modulo 97** au formulaire (§5.19), et conformité ESLint
+`react-hooks` v6. **Depuis la v6 (session Soldes du 12/7 après-midi)** : la
+**liste permanente « Soldes »** est créée, indexée et synchronisée — mémoire
+des soldes mensuels qui survit au vidage des listes trimestrielles (règle
+§5.20, script `npm run sp:soldes`) ; c'est la **décision §3 de l'app staff**
+(CONCEPTION-STAFF-APP.md v2), migration SQL différée sans blocage. Depuis la v4 : le **sélecteur de profils familiaux** est implémenté et validé
 en production (le FA actif est propagé et vérifié serveur), la
 **pré-inscription est réduite au minimum** (NN + e-mail + langue ; prénom/nom
 lus depuis la liste resident), le **check-email est devenu informatif** (plus
@@ -39,9 +51,9 @@ hiérarchique** (§10).
 
 | Fichier | Rôle |
 |---|---|
-| `src/App.tsx` | Page publique : formulaire de pré-inscription **minimal (NN + e-mail + langue de contact ; prénom/nom et « nom d'utilisateur » supprimés)** + avis informatif bleu « adresse déjà connue » (jamais bloquant) + bandeau « Déjà inscrit ? » → /portail + avis post-déconnexion (trilingue) |
-| `src/Portail.tsx` | Espace sécurisé : **sélecteur de profils familiaux** (écran « Qui êtes-vous ? » sur `needsProfile`, barre « Vous consultez le dossier de … » + « Changer de personne », FA actif propagé à /api/me et /api/declare), dernière déclaration en tuiles, carte du trimestre (mois cliquables, mois manquants déclarables via « + »), récapitulatif paiements, carte de paiement QR EPC, formulaire de déclaration/correction multi-fiches, bascule trimestre précédent (cache vidé au changement de personne) |
-| `src/styles/fedasil.css` | Design tokens charte Fedasil (violet #644391, rouge #d1103b, gris #676362) + sections 10-13 (trimestre, paiement, déclaration). Aucun style inline (CSP `style-src 'self'`) |
+| `src/App.tsx` | Page publique : formulaire de pré-inscription **minimal (NN + e-mail + langue de contact ; prénom/nom et « nom d'utilisateur » supprimés)** + avis informatif bleu « adresse déjà connue » (jamais bloquant) + bandeau « Déjà inscrit ? » → /portail + avis post-déconnexion (trilingue). **v6 (12/7)** : NN **formaté à la volée** (`00.00.00-000.00`), séparateurs acceptés à la saisie ET au collage, **contrôle modulo 97** client (NN + BIS, §5.19) ; langue de contact synchronisée via gestionnaire d'événement (ESLint v6, plus d'effet) |
+| `src/Portail.tsx` | Espace sécurisé : **sélecteur de profils familiaux** (écran « Qui êtes-vous ? » sur `needsProfile`, barre « Vous consultez le dossier de … » + « Changer de personne », FA actif propagé à /api/me et /api/declare), dernière déclaration en tuiles, carte du trimestre (mois cliquables, mois manquants déclarables via « + »), récapitulatif paiements, carte de paiement QR EPC, formulaire de déclaration/correction multi-fiches, bascule trimestre précédent (cache vidé au changement de personne). **v6 (12/7)** : ergonomie mobile (`useCoarsePointer`, QR replié sur tactile), statuts de paiement 4 couleurs + formes (§5.18), bouton « Payer X € » sur la tuile « Payé » et tuile « Reste à payer » cliquable (FIFO), **montant libre**, confirmation verte post-déclaration (mois maintenu sélectionné), aide `<details>` fiche de paie, pictogrammes de section, boutons « Réessayer », 401 → reconnexion (`window.location.assign`), pastille d'activation UNIQUE (localStorage `ra-activated-{oid}`), déconnexion aussi dans l'en-tête |
+| `src/styles/fedasil.css` | Design tokens charte Fedasil (violet #644391, rouge #d1103b, gris #676362) + sections 10-17 (trimestre, paiement, déclaration, profils, littératie, statuts de paiement/montant libre). Aucun style inline (CSP `style-src 'self'`) |
 | `src/main.tsx`, `src/i18n/*` | Inchangés. Libellés du portail locaux à `Portail.tsx` |
 | `public/staticwebapp.config.json` | **Emplacement critique : `public/`** (voir §9). Bloc `auth` (fournisseur AAD personnalisé), routes protégées `/api/me` et `/api/declare`, fallback SPA, en-têtes de sécurité + CSP durcie |
 
@@ -228,6 +240,7 @@ Suit le mois sélectionné ; mois payé → confirmation verte ; avertissement s
 mois plus ancien reste dû (guidage FIFO sans l'imposer). QR EPC (norme
 EPC069-12) généré côté client (`qrcode` npm) ; communication belge `+++…+++` en
 remittance non structurée (reconnue par les apps belges, testé avec ING).
+Échéance, statuts colorés, accès au paiement et montant libre : voir §5.18.
 
 ### 5.12 Imputation (processus cible, non codé)
 
@@ -353,8 +366,73 @@ calendrier décalé.
 - **Lettrage cible** : lignes « À traiter » avec communication structurée
   valide → décodage FA + mois (modulo 97 vérifiable) → addition dans `Paid` →
   « Imputé ». Candidat idéal pour **Power Automate** (licences Premium
-  acquises). ⚠ Tant que la liste « Soldes » n'existe pas, les **impayés d'un
-  trimestre vidé ne survivent que dans l'archive** (voir procédure §4).
+  acquises). Depuis le 12/7, les impayés d'un trimestre vidé **survivent dans
+  la liste « Soldes »** (règle de vérité §5.20) ; l'archive JSON/CSV reste la
+  sauvegarde brute.
+
+### 5.18 Échéance et statuts de paiement (confirmé le 10/7/2026)
+
+La contribution d'un mois est **due pour la fin du mois suivant sa clôture**
+(ex. avril → 31 mai). Le dépassement d'échéance est une **mise en évidence
+visuelle uniquement** : aucune action, aucun blocage, le paiement reste
+possible à l'identique. Règle codée dans `paymentDeadline()` (`Portail.tsx`) ;
+l'année est déduite du trimestre applicatif décalé (§5.16).
+
+- **4 statuts par mois** (`monthPayStatus()`, l'échéance dépassée PRIME sur
+  l'acompte) : **violet** = à payer (état normal) · **ambre** = acompte
+  versé · **vert** = entièrement payé · **rouge** = échéance dépassée.
+- La couleur n'est **jamais seule** : libellé texte sur les tuiles, FORME
+  distinctive + aria-label dans la carte trimestre (cercle vide /
+  demi-cercle / coche / point d'exclamation). Le rouge n'est JAMAIS porté
+  par un élément interactif (charte Fedasil).
+- Statut du **trimestre** (tuile « Reste à payer », cliquable → sélectionne
+  le mois impayé le plus ancien, FIFO) dérivé des mois : tout payé → vert ;
+  une échéance dépassée → rouge ; un acompte → ambre ; sinon violet.
+- **Accès au paiement** : bouton violet plein « Payer X € » intégré à la
+  tuile « Payé » du mois affiché → défilement direct vers le QR et les
+  informations de virement.
+- **Montant libre** : par défaut le solde du mois (total, ou reste après
+  acompte) ; champ optionnel borné 0,01 → solde ; le QR EPC et le champ
+  « Montant » copiable suivent le montant saisi ; la communication
+  structurée reste IMMUABLE (§5.17, `Paid` = cumul de virements).
+
+### 5.19 Saisie du numéro national au formulaire
+
+Le champ NN accepte la saisie et le collage **avec ou sans séparateurs**
+(points/tirets/espaces) et se formate **à la volée** en `00.00.00-000.00` ;
+l'API reçoit toujours **11 chiffres nus** (inchangé côté serveur). Un
+contrôle **modulo 97** côté client (variantes « né·e avant 2000 » et
+« à partir de 2000 » avec préfixe « 2 », donc **numéros BIS couverts** —
+aucun faux rejet pour le public demandeur d'asile) signale les fautes de
+frappe avant l'envoi, avec un message local trilingue.
+⚠ Ce contrôle CLIENT ne remplace pas le durcissement SERVEUR
+`NN_CHECKSUM_STRICT` (§10 point 4), qui reste prioritaire : le NN est le
+seul secret d'accès.
+
+### 5.20 Liste « Soldes » — mémoire permanente des soldes mensuels (créée le 12/7/2026)
+
+Décision §3 de l'app staff (CONCEPTION-STAFF-APP.md v2). Liste permanente,
+**une ligne par FA × année × mois déclaré** (photo complète, pas seulement
+les impayés), alimentée par **`npm run sp:soldes -- T2 2026`** (upsert
+idempotent depuis une liste KB-Cumul, clé `Title` = `<FA>-<année>-<mois>`,
+mode `--dry-run`, ne touche jamais aux colonnes qu'il ne possède pas).
+
+**Règle de vérité** : tant que la ligne KB-Cumul d'un mois existe (~9 mois
+après la clôture du trimestre), **KB-Cumul reste la source** (le portail la
+lit) et `sp:soldes` resynchronise (paiements tardifs) ; **après le vidage**
+de la liste trimestrielle, **Soldes est la seule vérité** (le lettrage y
+écrira directement).
+
+Colonnes calculées à chaque sync : `Balance` (Contribution − Paid),
+`PayStatus` (**codes techniques neutres** `Paid`/`Partial`/`Unpaid` — le
+staff est FR/NL, l'interface traduit, la donnée ne porte aucune langue ;
+l'état « échu » n'est jamais stocké : il se dérive de `DueDate` à
+l'affichage), `DueDate` (échéance §5.18), `YearMonth` (AAAAMM, dimension de
+découpe fine). **5 colonnes indexées** (`FedasilNumber`, `Year`, `Quarter`,
+`YearMonth`, `PayStatus`) : toute requête doit commencer par l'une d'elles
+et renvoyer moins de 5000 lignes (filtres composés — discipline « 5000 »,
+CONCEPTION-STAFF-APP §6). Volumétrie constatée : ~2000 lignes/trimestre
+(données de test T4), soit ~8000/an.
 
 ## 6. Données SharePoint
 
@@ -382,9 +460,14 @@ Pacifique américain, ce qui décale tous les affichages d'horodatage).
 - Contrôle trimestriel : brut BCSS (totaux trimestre) vs net déclaré ; net
   « vraisemblable » estimé via ratio Jobat. Recommandation : contrôle par
   exception (seuil d'écart).
-- **Recommandation structurante (non codée) :** liste permanente « Soldes »
-  (FA, trimestre, dû, payé, statut, communication d'apurement) alimentée à la
-  clôture de trimestre, pour que les impayés survivent à l'archivage.
+- Liste **Soldes** (`610bf274-1738-4323-af0a-8c108945a1d9`, créée le
+  12/7/2026 par provisioning) : mémoire permanente des soldes mensuels
+  (règle §5.20). Colonnes : `Title` (clé `<FA>-<année>-<mois>`),
+  `FedasilNumber`*, `Year`*, `Quarter`*, `Month`, `YearMonth`*, `NetSalary`,
+  `GrossSalary`, `Contribution`, `Paid`, `Balance`, `PayStatus`* (choix
+  `Paid`/`Partial`/`Unpaid`), `StructuredCom`, `DueDate` — les * sont
+  **indexées**. Les colonnes du futur moteur de rappels (module 4 staff)
+  s'y ajouteront par provisioning, protégées de la synchronisation.
 - Lettrage cible : import CSV bancaire → rapprochement automatique → alimente
   `Paid` → base des **rappels automatiques** (par lots, validés par un humain).
 - NB d'ergonomie : les listes créées par API n'apparaissent PAS dans le menu
@@ -395,11 +478,11 @@ Pacifique américain, ce qui décale tous les affichages d'horodatage).
 
 La structure SharePoint est décrite dans le dépôt et appliquée en une commande.
 
-- **`sharepoint-schema.json`** (racine) : décrit les **7 listes** + colonnes
+- **`sharepoint-schema.json`** (racine) : décrit les **8 listes** + colonnes
   voulues (Residents List, ResidentApp Aidants, KB-Cumul T1..T4,
-  KB-Paiements). `documentOnly: true` = colonne existante (vérifiée, jamais
-  créée) ; les autres sont créées si absentes → le MÊME schéma vérifie le
-  tenant Fedasil et provisionne un tenant de test vierge.
+  KB-Paiements, **Soldes**). `documentOnly: true` = colonne existante
+  (vérifiée, jamais créée) ; les autres sont créées si absentes → le MÊME
+  schéma vérifie le tenant Fedasil et provisionne un tenant de test vierge.
 - **`scripts/provision-sharepoint.ts`** : script idempotent, ne supprime/modifie
   JAMAIS rien. Réutilise les identifiants Graph de `api/local.settings.json`.
   Types gérés : text, note, number, dateTime, boolean, **choice** (validé le
@@ -409,6 +492,22 @@ La structure SharePoint est décrite dans le dépôt et appliquée en une comman
   confirmation en tapant `VIDER`, mode `--export-only`, reprise sur
   limitation de débit Graph. ⚠ `archives/` contient des données personnelles
   → **doit figurer dans `.gitignore`**.
+- **`scripts/snapshot-soldes.ts`** (12/7) : synchronisation KB-Cumul →
+  **Soldes** (§5.20) — upsert idempotent (clé `Title`), `--dry-run`,
+  colonnes calculées (`Balance`, `PayStatus`, `DueDate`, `YearMonth`),
+  reprise sur limitation Graph, lignes source invalides ignorées avec ⚠,
+  année OBLIGATOIRE en argument. Ne touche jamais aux colonnes qu'il ne
+  possède pas. ⚠ Si le schéma a évolué : `sp:provision` AVANT `sp:soldes`
+  (sinon Graph 400 « Field not recognized » — reprise automatique après).
+- **Colonnes indexées** (12/7) : le schéma accepte `"indexed": true`
+  (colonne créée indexée — tri/filtre efficaces, seuil des 5000). Fidèle au
+  principe « jamais de modification » : une colonne existante non indexée
+  est seulement signalée ⚠ (index à poser à la main). NB : SharePoint
+  refuse d'indexer au-delà de ~20 000 éléments — poser les index tôt.
+- **`scripts/tsconfig.json`** (12/7) : contexte TypeScript **Node** dédié
+  au dossier `scripts/` (`types: ["node"]`, `noEmit`) — supprime les
+  erreurs d'éditeur `node:fs`/`process` dues au tsconfig navigateur du
+  projet Vite. `tsx` reste le seul exécutant.
 - **`PROCEDURE-BASCULE-TRIMESTRE.md`** (racine) : checklist d'exploitation
   complète de la bascule (archivage → variables SWA → re-run du DERNIER
   workflow → vérifications portail → local) + calendrier (§5.16) + tableau
@@ -418,11 +517,15 @@ La structure SharePoint est décrite dans le dépôt et appliquée en une comman
     internes**, types) — aucune écriture.
   - `npm run sp:provision` → applique le schéma (créations uniquement).
   - `npm run sp:rotate -- T3 [2025] [--export-only]` → archivage/vidage.
-- Nécessite `tsx` (`npm i -D tsx`).
+  - `npm run sp:soldes -- T2 2026 [--dry-run]` → synchronisation vers Soldes
+    (année OBLIGATOIRE). ⚠ Les scripts `sp:*` vivent dans le `package.json`
+    **RACINE** (pas dans `api/package.json`).
+- Nécessite `tsx` (`npm i -D tsx`) et, pour l'éditeur, `@types/node`
+  (voir `scripts/tsconfig.json`).
 - **A servi à créer** la colonne `EntraOid`, puis (9/7) les listes Aidants,
   T1-T3 et KB-Paiements sur le tenant de test.
-- Bénéfice futur : la liste « Soldes » (option 3) deviendra une entrée de
-  schéma + une commande.
+- Bénéfice réalisé (12/7) : la liste « Soldes » est née d'une entrée de
+  schéma + `sp:provision` (13 créations), et vit par `sp:soldes`.
 
 ## 8. Configuration (variables d'environnement)
 
@@ -499,14 +602,30 @@ aidants (§5.13) ; **garde-fou « ResidentApp Aidants »** (fail-closed) ;
 7 listes sur le tenant de test ; outillage de **bascule trimestrielle**
 (procédure + `sp:rotate`).
 
+✅ **TERMINÉ (v6, 12/7)** : **session ergonomie complète** — voir
+CHANGELOG-session-2026-07-12.md et §5.18/§5.19 (mobile, statuts de paiement
+colorés, boutons de paiement intégrés aux tuiles, montant libre, pastille
+d'activation unique, aide fiche de paie, « Réessayer », 401 → reconnexion,
+NN formaté + modulo 97 client, conformité ESLint react-hooks v6).
+
+📅 **ÉCHÉANCE PROCHE : première bascule réelle T2 → T3 le 1er août 2026**
+(§5.16). Prévoir une **répétition à blanc** avant (archivage `--export-only`
+sur les données réelles, relecture de PROCEDURE-BASCULE-TRIMESTRE.md,
+checklist du jour J : variables SWA + re-run du DERNIER workflow).
+
 1. **Gouvernance de l'ANNÉE** : modèle confirmé = 4 listes permanentes à ID
    fixes, archivées puis vidées à la bascule (§5.16-5.17). Reste : nommer les
    archives avec l'année (fait par `sp:rotate`), et trancher l'ambiguïté
    année de la communication structurée (virements tardifs → imputation
    manuelle, §5.12).
-2. **Liste « Soldes »** (option 3) + processus rappels. Créable via le schéma
-   de provisioning. Point critique : les impayés d'un trimestre vidé ne
-   survivent aujourd'hui que dans l'archive (§5.17).
+2. ✅ **Liste « Soldes »** : FAIT le 12/7 (règle §5.20, script `sp:soldes`,
+   procédure de bascule mise à jour — étapes A et E). Reste de ce chantier :
+   le **processus de rappels** lui-même (module 4 de l'app staff — colonnes
+   d'escalade à ajouter à Soldes par provisioning) ; **améliorations
+   consignées** pour `snapshot-soldes.ts` : lecture de la cible filtrée par
+   `Year`+`Quarter` au lieu de la liste entière (indispensable avant la 2ᵉ
+   année), et vérification des colonnes AVANT écriture (message clair
+   « lancer sp:provision » au lieu d'un 400 Graph).
 3. **Lettrage des paiements** : import CSV bancaire hebdo → liste paiements →
    imputation automatique des communications structurées dans `Paid`.
    Candidat **Power Automate** (licences Premium acquises) ; structure de
@@ -518,7 +637,8 @@ aidants (§5.13) ; **garde-fou « ResidentApp Aidants »** (fail-closed) ;
    - IBAN Fedasil réel (remplacer l'IBAN de test) ;
    - `NN_CHECKSUM_STRICT=true` + rate limiting robuste + CAPTCHA — **priorité
      RENFORCÉE** : depuis le formulaire minimal, le NN est le seul secret
-     d'accès (voir §5.13) ;
+     d'accès (voir §5.13). NB : le contrôle modulo 97 CLIENT est fait
+     (v6, §5.19) mais ne remplace pas le durcissement SERVEUR ;
    - question « Rester connecté ? » (KMSI) sur postes partagés ;
    - suppression secret expiré éventuel ; nettoyage comptes invités orphelins ;
    - décision suppression du code `DEBUG_ERRORS` ;
@@ -527,7 +647,10 @@ aidants (§5.13) ; **garde-fou « ResidentApp Aidants »** (fail-closed) ;
 6. **Variante d'e-mail pour les membres internes** dans `invitationEmail.ts`
    (« votre accès est prêt, connectez-vous » au lieu du wording
    « invitation ») — partager le fichier dans le projet Claude.
-7. Nettoyage données de test (personas NN, lignes de test des trimestres).
+7. Nettoyage données de test (personas NN, lignes de test des trimestres) +
+   clés orphelines de `translations.ts` (v6 : `firstNameLabel`,
+   `lastNameLabel`, `errorFirstNameRequired`, `errorLastNameRequired`,
+   `nationalIdHelper`).
 8. Payconiq (alternative de paiement) à évaluer institutionnellement.
 9. **[DÉCISION HIÉRARCHIE] Migration base de données** : quitter SharePoint
    pour **Azure SQL (recommandé)** ou Dataverse. Analyse du 10/7 :
@@ -545,6 +668,12 @@ aidants (§5.13) ; **garde-fou « ResidentApp Aidants »** (fail-closed) ;
    - Recommandation : SQL pour les données résidents, Power Apps/Automate
      (connecteur SQL Premium, couvert par les licences) pour l'outillage
      staff sur la MÊME base.
+   - **Chiffres du 12/7 pour la note d'arbitrage** (à rédiger — voir
+     CONCEPTION-STAFF-APP §5 point 10) : ~2000 lignes/trimestre constatées,
+     ~8000/an dans Soldes, seuil SharePoint des 5000 dépassé dès la première
+     année pleine — tenable une décennie par discipline (index, filtres
+     composés, agrégats précalculés — CONCEPTION-STAFF-APP §6), là où SQL
+     supprime la discipline. Soldes = source de reprise le jour venu.
 10. **[CHANTIER CONSIGNÉ — non prioritaire] Modèle de délégation aidants** :
     permettre l'accès SIMULTANÉ résident + aidant à un même dossier
     (aujourd'hui la ré-inscription par NN TRANSFÈRE l'accès, §5.13). Piste
@@ -560,7 +689,10 @@ aidants (§5.13) ; **garde-fou « ResidentApp Aidants »** (fail-closed) ;
     liste Aidants alimentée par le staff, variables SWA (dont
     `INVITE_REDIRECT_URL` → `/portail`), **paramètres régionaux du site**
     (fuseau Bruxelles + fr-BE — le défaut est le Pacifique), lancement rapide
-    du menu, et validation business des règles §5.2/§5.13.
+    du menu, **listes « KB-Cumul Archives \<année\> »** (relever la structure
+    avec `sp:inspect`, tester le contrat Soldes §5.20 — reprise d'historique
+    vs succession, voir CONCEPTION-STAFF-APP §3.4), et validation business
+    des règles §5.2/§5.13.
 
 ## 11. Leçons de la session du 9/7 (option 1 + provisioning)
 
@@ -643,6 +775,78 @@ aidants (§5.13) ; **garde-fou « ResidentApp Aidants »** (fail-closed) ;
   atterrit sur ses données ; `PORTAL_URL` se déduit intelligemment (pas de
   double `/portail/portail`).
 
+**Ajouts session 4 du 12/7 (ergonomie) :**
+
+- **ESLint react-hooks v6 (lint du React Compiler)** : `window.location.href
+  = …` interdit dans un composant → utiliser `window.location.assign(…)`
+  (comportement identique) ; aucun `setState` SYNCHRONE dans le corps d'un
+  effet → décider dans le flux asynchrone (init, réponse réseau) ou dans un
+  gestionnaire d'événement.
+- **Un QR ne se scanne pas sur l'écran qui l'affiche** : sur tactile
+  (`matchMedia("(hover: none) and (pointer: coarse)")`), champs copiables
+  d'abord, QR replié derrière un bouton (et généré à la demande seulement).
+- **La couleur ne porte jamais l'information seule** : libellé texte ou
+  forme distinctive (+ aria-label) systématiques ; le rouge jamais sur un
+  élément interactif — l'affordance de clic reste violette même quand l'état
+  est rouge.
+- **Gare aux conflits sémantiques de couleur** : la coche verte « déclaré »
+  entrait en collision avec vert = « payé » → remplacée par une icône d'état
+  de paiement par mois (forme + couleur).
+- **Pastille « une seule fois »** : clé localStorage par oid
+  (`ra-activated-{oid}`) — par compte ET par appareil, donc compatible
+  postes partagés ; localStorage indisponible (navigation privée) → ne pas
+  afficher plutôt que ré-afficher en boucle.
+- **Le modulo 97 du NN couvre aussi les numéros BIS** (mêmes deux variantes
+  avant/à partir de 2000) : validation client sans faux rejet pour le public
+  demandeur d'asile. L'exemple du texte d'aide (`85.07.30-033.28`) a un
+  checksum réellement valide.
+- **Formatage à la volée d'un champ masqué** : effacer un séparateur doit
+  effacer aussi le chiffre précédent, sinon le reformatage ré-ajoute le
+  séparateur et la touche retour semble cassée.
+- **Resynchroniser les fichiers du projet Claude après CHAQUE session** :
+  `App.tsx` était resté en v4 dans le projet, ce qui a failli faire
+  régresser le formulaire minimal lors du chantier suivant.
+
+**Ajouts session 5 du 12/7 (liste Soldes — décision §3 app staff) :**
+
+- **« Soldes vs SQL » était un faux duel** : deux décisions, deux
+  propriétaires, deux horizons — Soldes = continuité opérationnelle (à
+  nous, tout de suite) ; SQL = cible structurelle (hiérarchie, sans
+  blocage). Bâtir la solution minimale ET instruire la structurelle.
+- **Le seuil SharePoint des 5000 est une limite de REQUÊTE, pas de
+  stockage** : toute requête filtrée doit commencer par une colonne indexée
+  ET renvoyer < 5000 lignes → filtres composés (`Year+Quarter`,
+  `PayStatus+Year`, `YearMonth` AAAAMM comme dimension de découpe fine),
+  jamais de filtre « qui grossit avec les années » seul. La lecture paginée
+  SANS filtre n'est pas soumise au seuil (traitements de fond). Les index
+  se posent AVANT ~20 000 éléments (fenêtre qui se ferme). Attention aussi
+  aux limites de délégation du connecteur SharePoint de Power Apps
+  (troncature silencieuse).
+- **Codes techniques neutres, l'interface traduit** : public staff FR/NL →
+  les valeurs stockées sont des codes anglais stables (`Paid`/`Partial`/
+  `Unpaid`), la langue est une affaire d'affichage. (Le `Status` français
+  de KB-Paiements suivra lors du module 3 staff.)
+- **Un script de synchronisation possède SES colonnes et rien d'autre** :
+  l'upsert idempotent (clé naturelle en `Title`) rend toute interruption
+  bénigne et permet aux autres modules d'ajouter leurs colonnes sans
+  risque. Recréer une liste jeune est souvent plus propre que la retoucher
+  (l'ID change : le noter).
+- **`sp:provision` AVANT `sp:soldes` quand le schéma évolue** — sinon Graph
+  400 « Field not recognized » (sans gravité : relancer, reprise
+  automatique).
+- **Les scripts `sp:*` vivent dans le `package.json` RACINE** — pas dans
+  `api/package.json`. Réflexes de vérification : `npm run` (liste les
+  scripts du dossier courant) et « suis-je dans le bon dépôt ? » — la
+  couche données vit dans le dépôt du PORTAIL, l'app staff ne fait que
+  consommer les listes.
+- **`scripts/` mérite son propre `tsconfig.json` Node** : VS Code applique
+  le tsconfig le plus proche ; sans lui, les scripts Node sont vérifiés
+  avec la config navigateur de Vite (fausses erreurs `node:fs`/`process`).
+- **Récidive JSON strict** : `local.settings.json` a encore cassé sur une
+  virgule (« Expected double-quoted property name » ligne N = virgule en
+  trop à la fin de la ligne N−1). La commande de validation
+  `node -e "JSON.parse(…)"` reste le premier réflexe.
+
 ---
 
 ## 12. Prompt de relance (à coller au début de la prochaine conversation)
@@ -650,26 +854,34 @@ aidants (§5.13) ; **garde-fou « ResidentApp Aidants »** (fail-closed) ;
 > Bonjour Claude. Je poursuis le développement de ResidentApp (portail Fedasil
 > pour résidents, React + TypeScript + CSS pur, Azure Static Web Apps +
 > Functions). CONTEXTE : tout l'état du projet est dans
-> ETAT-PROJET-ResidentApp.md (v5 du 9 juillet 2026) dans les fichiers du projet
+> ETAT-PROJET-ResidentApp.md (v6 du 12 juillet 2026) dans les fichiers du projet
 > — lis-le d'abord, en particulier la section 5 « Règles métier » et la section
 > 4 « Architecture Azure vs Entra ». En résumé : le parcours complet est validé
 > en production, l'authentification personnalisée Entra et le matching par `oid`
 > sont opérationnels, le sélecteur de profils familiaux (familles ET aidantes
 > sociales avec garde-fou « ResidentApp Aidants », comptes internes liés
 > directement, règle « un dossier = un compte lié ») est validé en production,
-> le formulaire de pré-inscription est minimal (NN + e-mail + langue, noms lus
-> depuis la liste resident), la bascule trimestrielle est outillée
-> (PROCEDURE-BASCULE-TRIMESTRE.md + npm run sp:rotate), et un provisioning
-> déclaratif des 7 listes SharePoint est en place (npm run sp:inspect /
+> le formulaire de pré-inscription est minimal (NN + e-mail + langue, formaté
+> à la volée avec contrôle modulo 97 — §5.19), la session ergonomie du 12/7
+> est terminée (statuts de paiement colorés + règle d'échéance §5.18, montant
+> libre, adaptations mobiles — voir CHANGELOG-session-2026-07-12.md), la
+> bascule trimestrielle est outillée
+> (PROCEDURE-BASCULE-TRIMESTRE.md + npm run sp:rotate — PREMIÈRE BASCULE
+> RÉELLE T2 → T3 le 1er août 2026, désormais avec les étapes sp:soldes A et
+> E de la procédure), la liste permanente « Soldes » est créée et
+> synchronisée (§5.20, npm run sp:soldes), et un provisioning
+> déclaratif des 8 listes SharePoint est en place (npm run sp:inspect /
 > sp:provision). La migration SQL/Dataverse est analysée mais en attente de
 > décision hiérarchique.
 > Les fichiers actuels du code sont dans le projet : App.tsx, Portail.tsx,
 > fedasil.css, main.tsx, Subscription.ts, Me.ts, Declare.ts,
 > public/staticwebapp.config.json, sharepoint-schema.json,
-> scripts/provision-sharepoint.ts, scripts/rotate-quarter.ts.
+> scripts/provision-sharepoint.ts, scripts/rotate-quarter.ts,
+> scripts/snapshot-soldes.ts.
 > OBJECTIF DE CETTE DISCUSSION : [choisir dans la section 10 « Reste à faire »,
 > par exemple :]
-> * Liste « Soldes » et processus de rappels de paiement ;
+> * Répétition à blanc de la bascule T2 → T3 (échéance : 1er août — priorité) ;
+> * Processus de rappels de paiement (la liste « Soldes » est FAITE — §5.20) ;
 > * Lettrage des paiements (import CSV bancaire, candidat Power Automate) ;
 > * Durcissements production (Sites.Selected, NN_CHECKSUM_STRICT, CAPTCHA…) ;
 > * Réplication sur le tenant Fedasil (checklist §10 point 11).
