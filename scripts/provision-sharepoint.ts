@@ -11,6 +11,13 @@
  *                             noms INTERNES, types) — aucune écriture.
  *    npm run sp:provision  -> applique le schéma (créations uniquement).
  *
+ *  Propriété "indexed" (ajout du 12/7/2026, liste Soldes) : une colonne
+ *  déclarée { "indexed": true } est créée INDEXÉE (tri/filtre efficaces,
+ *  contournement du seuil des 5000 éléments). Fidèle au principe « jamais de
+ *  modification » : si la colonne existe déjà SANS index, le script signale
+ *  seulement (⚠) — l'index se pose alors à la main (Paramètres de la liste →
+ *  Colonnes indexées).
+ *
  *  Identifiants : réutilise api/local.settings.json (TENANT_ID,
  *  GRAPH_CLIENT_ID, GRAPH_CLIENT_SECRET, SP_SITE_HOSTNAME, SP_SITE_PATH).
  *  L'app « e-residentapp admin » a déjà la permission Sites.ReadWrite.All :
@@ -32,6 +39,7 @@ type SchemaColumn = {
   name: string;
   type: ColumnType;
   choices?: string[];
+  indexed?: boolean;
   documentOnly?: boolean;
   note?: string;
 };
@@ -60,6 +68,7 @@ type GraphColumn = {
   displayName?: string;
   hidden?: boolean;
   readOnly?: boolean;
+  indexed?: boolean;
   text?: { allowMultipleLines?: boolean };
   number?: unknown;
   boolean?: unknown;
@@ -209,28 +218,33 @@ function actualColumnType(col: GraphColumn): string {
 }
 
 // Corps Graph pour la création d'une colonne selon son type de schéma.
+// La propriété indexed est ajoutée en dernier (colonne créée directement indexée).
 function buildColumnBody(col: SchemaColumn): Record<string, unknown> {
-  switch (col.type) {
-    case "text":
-      return { name: col.name, text: {} };
-    case "note":
-      return { name: col.name, text: { allowMultipleLines: true } };
-    case "number":
-      return { name: col.name, number: {} };
-    case "boolean":
-      return { name: col.name, boolean: {} };
-    case "dateTime":
-      return { name: col.name, dateTime: {} };
-    case "choice":
-      return {
-        name: col.name,
-        choice: {
-          allowTextEntry: false,
-          displayAs: "dropDownMenu",
-          choices: col.choices ?? [],
-        },
-      };
-  }
+  const base = ((): Record<string, unknown> => {
+    switch (col.type) {
+      case "text":
+        return { name: col.name, text: {} };
+      case "note":
+        return { name: col.name, text: { allowMultipleLines: true } };
+      case "number":
+        return { name: col.name, number: {} };
+      case "boolean":
+        return { name: col.name, boolean: {} };
+      case "dateTime":
+        return { name: col.name, dateTime: {} };
+      case "choice":
+        return {
+          name: col.name,
+          choice: {
+            allowTextEntry: false,
+            displayAs: "dropDownMenu",
+            choices: col.choices ?? [],
+          },
+        };
+    }
+  })();
+  if (col.indexed) base.indexed = true;
+  return base;
 }
 
 // ---------- Mode INSPECT : rapport de l'état réel ----------
@@ -250,7 +264,10 @@ async function inspect(siteId: string): Promise<void> {
         col.displayName && col.displayName !== col.name
           ? `  (affiché : « ${col.displayName} »)`
           : "";
-      console.log(`   ${col.name.padEnd(24)} ${actualColumnType(col).padEnd(10)}${label}`);
+      const idx = col.indexed ? "  [indexée]" : "";
+      console.log(
+        `   ${col.name.padEnd(24)} ${actualColumnType(col).padEnd(10)}${idx}${label}`
+      );
     }
     console.log("");
   }
@@ -319,8 +336,13 @@ async function provision(siteId: string, schema: Schema): Promise<void> {
             console.log(
               `   ⚠ ${col.name} : type réel « ${actualType} » ≠ schéma « ${col.type} » (aucune modification faite — aligner le schéma ou la config, ex. SP_FA_IS_NUMBER).`
             );
+          } else if (col.indexed && !existing.indexed) {
+            warnings++;
+            console.log(
+              `   ⚠ ${col.name} (${col.type}) : déclarée INDEXÉE mais ne l'est pas — poser l'index à la main (Paramètres de la liste → Colonnes indexées). Aucune modification faite.`
+            );
           } else {
-            console.log(`   ✓ ${col.name} (${col.type})`);
+            console.log(`   ✓ ${col.name} (${col.type}${existing.indexed ? ", indexée" : ""})`);
           }
         }
         continue;
@@ -337,7 +359,7 @@ async function provision(siteId: string, schema: Schema): Promise<void> {
 
       await graph("POST", `/sites/${siteId}/lists/${list.id}/columns`, buildColumnBody(col));
       created++;
-      console.log(`   + ${col.name} (${col.type}) créée`);
+      console.log(`   + ${col.name} (${col.type}${col.indexed ? ", indexée" : ""}) créée`);
     }
     console.log("");
   }

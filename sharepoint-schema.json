@@ -9,6 +9,10 @@
     "  name         nom INTERNE de la colonne (celui utilisé par l'API et les variables SP_*_FIELD)",
     "  type         text | note | number | boolean | dateTime | choice",
     "  choices      liste des valeurs (type choice uniquement)",
+    "  indexed      true = colonne créée INDEXÉE (tri/filtre efficaces, seuil des 5000 éléments).",
+    "               Une colonne existante non indexée n'est JAMAIS modifiée : le script signale",
+    "               seulement (l'index se pose alors à la main : Paramètres de la liste →",
+    "               Colonnes indexées).",
     "  documentOnly true = la colonne existe déjà (créée à la main) : le script vérifie sa présence",
     "               mais ne la crée jamais.",
     "  note         commentaire libre (documentation)"
@@ -152,6 +156,37 @@
           "choices": ["À traiter", "Imputé", "Anomalie"],
           "note": "État du lettrage : « À traiter » à l'import ; « Imputé » quand reporté dans Paid (KB-Cumul) ; « Anomalie » si irrésoluble (comm invalide, montant incohérent…)."
         }
+      ]
+    },
+    {
+      "displayName": "Soldes",
+      "description": "MÉMOIRE PERMANENTE des soldes mensuels (photo complète, décision du 12/7/2026 — §3 de CONCEPTION-STAFF-APP.md). Une ligne = un mois déclaré pour un FA (FA × année × mois), créée et resynchronisée depuis les listes KB-Cumul par « npm run sp:soldes -- T2 2026 » (upsert idempotent, clé = Title). RÈGLE DE VÉRITÉ : tant que la ligne KB-Cumul existe (~9 mois après la clôture du trimestre), KB-Cumul reste la source (le portail résident la lit) et sp:soldes resynchronise ; après le vidage de la liste trimestrielle, Soldes devient la SEULE vérité. Les colonnes du moteur de rappels (module 4 de l'app staff : niveau d'escalade, dates d'envoi…) seront ajoutées ici plus tard — sp:soldes ne touche JAMAIS aux colonnes qu'il ne possède pas.",
+      "columns": [
+        {
+          "name": "Title",
+          "type": "text",
+          "documentOnly": true,
+          "note": "Colonne intégrée. Clé d'unicité et d'idempotence de sp:soldes : <FA>-<année>-<mois sur 2 chiffres>, ex. FA00655210-2026-04."
+        },
+        { "name": "FedasilNumber", "type": "text", "indexed": true, "note": "FA (clé maîtresse, §5.1). Indexée : la fiche 360° filtre par FA." },
+        { "name": "Year", "type": "number", "indexed": true, "note": "Année des données (explicite — plus d'année implicite comme dans KB-Cumul)." },
+        { "name": "Quarter", "type": "number", "indexed": true, "note": "Trimestre 1-4, dérivé du mois. Indexée : les contrôles (BCSS, tableau de bord) se font par trimestre." },
+        { "name": "Month", "type": "number", "note": "Mois 1-12." },
+        { "name": "YearMonth", "type": "number", "indexed": true, "note": "AAAAMM (ex. 202604) = Year×100 + Month, calculé par sp:soldes. Dimension de découpe FINE : une égalité renvoie au plus un mois d'une année, donc reste sous le seuil des 5000 quel que soit le volume total. Si un trimestre dépasse un jour 5000 déclarations, les contrôles trimestriels se font en 3 requêtes mensuelles assemblées en code." },
+        { "name": "NetSalary", "type": "number" },
+        { "name": "GrossSalary", "type": "number" },
+        { "name": "Contribution", "type": "number" },
+        { "name": "Paid", "type": "number", "note": "CUMUL payé pour le mois (même convention que KB-Cumul, §5.17)." },
+        { "name": "Balance", "type": "number", "note": "Contribution − Paid, arrondi à 2 décimales, recalculé à chaque sync (permet tri et filtre « solde > 0 » sans calcul client)." },
+        {
+          "name": "PayStatus",
+          "type": "choice",
+          "choices": ["Paid", "Partial", "Unpaid"],
+          "indexed": true,
+          "note": "CODES TECHNIQUES NEUTRES (public staff FR/NL : l'interface traduit à l'affichage, la donnée ne porte aucune langue). Dérivé à chaque sync : Balance ≤ 0 → Paid ; sinon Paid > 0 → Partial ; sinon Unpaid. INDEXÉE : c'est la requête du moteur de rappels (PayStatus = Unpaid/Partial) — un filtre d'égalité indexé passe le seuil des 5000 éléments. L'état « échu » n'est PAS stocké (il dépend de la date du jour : à dériver de DueDate à l'affichage, comme §5.18 côté portail)."
+        },
+        { "name": "StructuredCom", "type": "text", "note": "Communication structurée d'origine du mois (§5.10) — permet de re-proposer la même communication dans les rappels tant qu'il ne s'agit pas d'un apurement 9T0 (module 4)." },
+        { "name": "DueDate", "type": "dateTime", "note": "Échéance §5.18 : dernier jour du mois SUIVANT le mois déclaré (avril → 31 mai). Calculée par sp:soldes." }
       ]
     }
   ]

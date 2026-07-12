@@ -12,7 +12,9 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "sp:inspect": "tsx scripts/provision-sharepoint.ts inspect",
-    "sp:provision": "tsx scripts/provision-sharepoint.ts provision"
+    "sp:provision": "tsx scripts/provision-sharepoint.ts provision",
+    "sp:rotate": "tsx scripts/rotate-quarter.ts",
+    "sp:soldes": "tsx scripts/snapshot-soldes.ts"
   },
   "dependencies": {
     "qrcode": "^1.5.4",
@@ -21,7 +23,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
-    "@types/node": "^24.10.1",
+    "@types/node": "^24.13.3",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",
