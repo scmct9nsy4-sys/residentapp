@@ -1442,10 +1442,8 @@ export default function Portail() {
   const [status, setStatus] = useState<Status>("loading");
   const [current, setCurrent] = useState<MeResponse | null>(null);
 
-  // Identifiant stable du compte connecté (= oid pour AAD, via /.auth/me) :
-  // clé de la pastille d'activation « une seule fois par appareil ».
-  const [principalId, setPrincipalId] = useState<string | null>(null);
-  // Pastille « Votre accès est activé » : première visite réussie uniquement.
+  // Pastille « Votre accès est activé » : première visite réussie uniquement
+  // (décidé dans init(), au moment où l'oid du compte est connu).
   const [showActivated, setShowActivated] = useState(false);
 
   // Mois affiché dans les tuiles (par défaut : le plus récent).
@@ -1490,24 +1488,6 @@ export default function Portail() {
     });
   }, [payScrollTick]);
 
-  // Pastille « Votre accès est activé » : affichée à la PREMIÈRE visite
-  // réussie de ce compte sur cet appareil (= l'activation vient d'aboutir),
-  // puis mémorisée en localStorage. Les visites suivantes récupèrent
-  // l'espace en haut de page pour le contenu utile.
-  useEffect(() => {
-    if (status !== "ready" || !principalId) return;
-    const key = `ra-activated-${principalId}`;
-    try {
-      if (!window.localStorage.getItem(key)) {
-        window.localStorage.setItem(key, "1");
-        setShowActivated(true);
-      }
-    } catch {
-      // Stockage local indisponible (navigation privée stricte) :
-      // on n'affiche pas la pastille plutôt que de l'afficher à chaque fois.
-    }
-  }, [status, principalId]);
-
   // --- Familles : plusieurs profils sur un même compte -----------------------
   // profiles : la liste des personnes liées au compte (null = pas encore su).
   // activeFa : le FA du profil choisi (null = un seul profil, résolu serveur).
@@ -1523,9 +1503,12 @@ export default function Portail() {
       const res = await fetch(url);
       // Session expirée pendant la consultation : repartir vers la
       // connexion plutôt que d'afficher une erreur incompréhensible.
+      // (assign() = même comportement que href, accepté par la règle
+      // ESLint react-hooks/immutability.)
       if (res.status === 401) {
-        window.location.href =
-          "/.auth/login/aad?post_login_redirect_uri=/portail";
+        window.location.assign(
+          "/.auth/login/aad?post_login_redirect_uri=/portail"
+        );
         return;
       }
       if (res.status === 404) {
@@ -1595,15 +1578,30 @@ export default function Portail() {
 
         // Pas connecté -> redirection vers la connexion Microsoft
         if (!authJson.clientPrincipal) {
-          window.location.href =
-            "/.auth/login/aad?post_login_redirect_uri=/portail";
+          window.location.assign(
+            "/.auth/login/aad?post_login_redirect_uri=/portail"
+          );
           return;
         }
 
-        // userId = oid pour AAD (cf. apprentissages du projet) : sert de
-        // clé pour n'afficher la pastille d'activation qu'une seule fois.
-        if (!cancelled) {
-          setPrincipalId(authJson.clientPrincipal.userId ?? null);
+        // Pastille « Votre accès est activé » : uniquement à la PREMIÈRE
+        // visite de ce compte sur cet appareil (l'activation vient d'aboutir),
+        // mémorisée en localStorage — clé par oid (userId = oid pour AAD,
+        // cf. apprentissages du projet). Décidé ICI, dans le flux asynchrone
+        // d'initialisation, et non dans un effet : la règle ESLint
+        // react-hooks interdit un setState synchrone dans le corps d'un effet.
+        try {
+          const oid = authJson.clientPrincipal.userId;
+          if (oid) {
+            const key = `ra-activated-${oid}`;
+            if (!window.localStorage.getItem(key)) {
+              window.localStorage.setItem(key, "1");
+              if (!cancelled) setShowActivated(true);
+            }
+          }
+        } catch {
+          // Stockage local indisponible (navigation privée stricte) : on
+          // n'affiche pas la pastille plutôt que la ré-afficher à chaque fois.
         }
 
         // 2) Récupérer SES données (filtrage fait côté serveur).
@@ -1640,8 +1638,9 @@ export default function Portail() {
         : "/api/me?quarter=previous";
       const res = await fetch(url);
       if (res.status === 401) {
-        window.location.href =
-          "/.auth/login/aad?post_login_redirect_uri=/portail";
+        window.location.assign(
+          "/.auth/login/aad?post_login_redirect_uri=/portail"
+        );
         return;
       }
       if (!res.ok) {

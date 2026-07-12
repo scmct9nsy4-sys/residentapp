@@ -5,6 +5,23 @@
 // Prérequis dans main.tsx :
 //   import "./styles/fedasil.css";
 //
+// FORMULAIRE MINIMAL (règle métier §5.14) :
+// Le formulaire ne demande QUE le numéro national, l'adresse e-mail et la
+// langue de contact. Les prénom/nom OFFICIELS font foi dans la liste
+// resident (l'API Subscription.ts ignore tout nom envoyé par le navigateur) :
+// zéro faute de frappe, et pas d'oracle NN -> nom côté client.
+//
+// SAISIE DU NUMÉRO NATIONAL (ergonomie) :
+//   - Le NN peut être tapé ou COLLÉ avec ou sans points/tirets/espaces
+//     (ex. « 85.07.30-033.28 » tel qu'il figure sur la carte).
+//   - Formatage AUTOMATIQUE à la volée pendant la frappe (00.00.00-000.00) ;
+//     effacer un séparateur efface aussi le chiffre qui le précède (sinon
+//     le curseur resterait bloqué sur le séparateur reformaté).
+//   - Contrôle du MODULO 97 belge avant envoi (numéros NN et BIS, personnes
+//     nées avant comme après 2000) : les fautes de frappe sont signalées
+//     immédiatement, avec un message clair, au lieu d'échouer côté serveur.
+//   - L'API reçoit toujours 11 chiffres NUS (inchangé côté serveur).
+//
 // CHECK-EMAIL ASSOUPLI (règles métier §5.2 et §5.3) :
 // Une adresse e-mail déjà connue dans Entra est un cas NORMAL :
 //   - familles partageant une seule adresse (plusieurs NN, un seul compte) ;
@@ -12,10 +29,9 @@
 //   - compte supprimé puis ré-invité (récupération par le NN).
 // /api/check-email ne BLOQUE donc plus rien : il alimente seulement un avis
 // INFORMATIF et rassurant (bleu, jamais rouge) sous le champ e-mail.
-// Le champ « nom d'utilisateur » (jamais exploité par l'API) est supprimé.
 // =============================================================================
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
 
 import { useLanguage } from "./i18n/useLanguage";
@@ -27,14 +43,70 @@ import type { Language } from "./i18n/translations";
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
 type FormData = {
-  nationalId: string;
-  firstName: string;
-  lastName: string;
+  nationalId: string; // valeur AFFICHÉE (formatée 00.00.00-000.00)
   email: string;
   contactLanguage: Language;
 };
 
 type FormErrors = Partial<Record<keyof FormData, string>>;
+
+// --- Numéro national : formatage et validation ---------------------------------
+
+/** Ne garde que les chiffres d'une saisie (points, tirets, espaces retirés). */
+function nnDigits(value: string): string {
+  return value.replace(/\D/g, "");
+}
+
+/** Formate progressivement 0 à 11 chiffres vers 00.00.00-000.00.
+ *  Fonctionne pendant la frappe : « 8507 » -> « 85.07 », etc. */
+function formatNationalId(digits: string): string {
+  const d = digits.slice(0, 11);
+  let out = d.slice(0, 2);
+  if (d.length > 2) out += "." + d.slice(2, 4);
+  if (d.length > 4) out += "." + d.slice(4, 6);
+  if (d.length > 6) out += "-" + d.slice(6, 9);
+  if (d.length > 9) out += "." + d.slice(9, 11);
+  return out;
+}
+
+/** Contrôle du modulo 97 du numéro national belge (11 chiffres).
+ *  Deux variantes officielles :
+ *    - né(e) avant 2000 : 97 - (9 premiers chiffres mod 97) ;
+ *    - né(e) à partir de 2000 : idem avec « 2 » préfixé aux 9 chiffres.
+ *  Les numéros BIS (registre bis, fréquents chez les demandeurs d'asile)
+ *  suivent le même algorithme : aucun risque de faux rejet.
+ *  NB : Number suffit (11 chiffres < 2^53), pas besoin de BigInt. */
+function isValidBelgianNN(digits: string): boolean {
+  if (!/^\d{11}$/.test(digits)) return false;
+  const base = digits.slice(0, 9);
+  const check = Number(digits.slice(9));
+  const before2000 = 97 - (Number(base) % 97);
+  const from2000 = 97 - (Number("2" + base) % 97);
+  return check === before2000 || check === from2000;
+}
+
+// Libellés locaux du champ NN (aide + erreur de contrôle), même approche que
+// les autres blocs de labels de cette page (pas de dépendance à translations.ts).
+const nnLabels = {
+  fr: {
+    helper:
+      "11 chiffres, comme sur votre carte : 85.07.30-033.28. Les points et tirets s'ajoutent automatiquement.",
+    checksum:
+      "Ce numéro ne semble pas correct. Vérifiez chaque chiffre sur votre carte de séjour ou d'identité.",
+  },
+  nl: {
+    helper:
+      "11 cijfers, zoals op uw kaart: 85.07.30-033.28. Punten en streepjes worden automatisch toegevoegd.",
+    checksum:
+      "Dit nummer lijkt niet correct. Controleer elk cijfer op uw verblijfs- of identiteitskaart.",
+  },
+  en: {
+    helper:
+      "11 digits, as on your card: 85.07.30-033.28. Dots and dashes are added automatically.",
+    checksum:
+      "This number doesn't seem correct. Check each digit on your residence or identity card.",
+  },
+} as const;
 
 // Avis informatif (jamais bloquant) quand l'adresse e-mail est déjà connue.
 // Ton volontairement rassurant : c'est un cas normal (familles, changement
@@ -174,18 +246,19 @@ export default function App() {
 
   const [formData, setFormData] = useState<FormData>({
     nationalId: "",
-    firstName: "",
-    lastName: "",
     email: "",
     contactLanguage: language,
   });
 
-  useEffect(() => {
-    setFormData((prev) => ({
-      ...prev,
-      contactLanguage: language,
-    }));
-  }, [language]);
+  // Changement de langue d'INTERFACE (pilules de l'en-tête) : la langue de
+  // CONTACT suit par défaut. Fait dans le gestionnaire d'événement et non
+  // dans un effet (règle ESLint react-hooks : pas de setState synchrone
+  // dans le corps d'un effet). La personne peut ensuite choisir une langue
+  // de contact différente via les pilules du formulaire.
+  const changeInterfaceLanguage = (lang: Language) => {
+    setLanguage(lang);
+    setFormData((prev) => ({ ...prev, contactLanguage: lang }));
+  };
 
   const [errors, setErrors] = useState<FormErrors>({});
   const [submitted, setSubmitted] = useState(false);
@@ -203,12 +276,27 @@ export default function App() {
     setFormData((prev) => {
       const next = { ...prev };
 
-      if (name === "email") {
+      if (name === "nationalId") {
+        // Saisie ou collage AVEC ou SANS séparateurs : on ne garde que les
+        // chiffres, puis on reformate 00.00.00-000.00.
+        const prevDigits = nnDigits(prev.nationalId);
+        let digits = nnDigits(value);
+
+        // Effacement d'un séparateur : les chiffres n'ont pas changé mais la
+        // valeur a raccourci -> on retire aussi le chiffre précédent, sinon
+        // le reformatage ré-ajoute le séparateur et l'effacement est bloqué.
+        if (
+          digits === prevDigits &&
+          value.length < prev.nationalId.length
+        ) {
+          digits = digits.slice(0, -1);
+        }
+
+        next.nationalId = formatNationalId(digits);
+      } else if (name === "email") {
         next.email = value.trim().toLowerCase();
       } else if (name === "contactLanguage") {
         next.contactLanguage = value as Language;
-      } else {
-        next[name as Exclude<keyof FormData, "contactLanguage">] = value;
       }
 
       return next;
@@ -224,19 +312,15 @@ export default function App() {
 
   const validate = (): boolean => {
     const newErrors: FormErrors = {};
+    const digits = nnDigits(formData.nationalId);
 
-    if (!formData.nationalId.trim()) {
+    if (!digits) {
       newErrors.nationalId = t("errorNationalIdRequired");
-    } else if (!/^\d{11}$/.test(formData.nationalId.trim())) {
+    } else if (!/^\d{11}$/.test(digits)) {
       newErrors.nationalId = t("errorNationalIdFormat");
-    }
-
-    if (!formData.firstName.trim()) {
-      newErrors.firstName = t("errorFirstNameRequired");
-    }
-
-    if (!formData.lastName.trim()) {
-      newErrors.lastName = t("errorLastNameRequired");
+    } else if (!isValidBelgianNN(digits)) {
+      // 11 chiffres mais modulo 97 incorrect : faute de frappe quasi certaine.
+      newErrors.nationalId = nnLabels[language].checksum;
     }
 
     if (!formData.email.trim()) {
@@ -290,10 +374,16 @@ export default function App() {
     try {
       setSubmitting(true);
 
+      // L'API reçoit le NN en 11 chiffres NUS (les séparateurs affichés ne
+      // sont qu'un confort de lecture) — format identique à avant.
       const response = await fetch(`${API_BASE}/api/pre-inscription`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData),
+        body: JSON.stringify({
+          nationalId: nnDigits(formData.nationalId),
+          email: formData.email,
+          contactLanguage: formData.contactLanguage,
+        }),
       });
 
       if (!response.ok) {
@@ -325,7 +415,7 @@ export default function App() {
 
         <LangPills
           value={language}
-          onChange={setLanguage}
+          onChange={changeInterfaceLanguage}
           labels={{ fr: "FR", nl: "NL", en: "EN" }}
           ariaLabel="Language / Langue / Taal"
         />
@@ -378,38 +468,21 @@ export default function App() {
 
         <div className="card">
           <form className="form" noValidate onSubmit={handleSubmit}>
+            {/* Numéro national : formaté à la volée (00.00.00-000.00),
+                séparateurs acceptés à la saisie comme au collage,
+                contrôle modulo 97 à la validation. 15 = longueur formatée. */}
             <Field
               id="nationalId"
               name="nationalId"
               label={t("nationalIdLabel")}
               inputMode="numeric"
               autoComplete="off"
+              maxLength={15}
               value={formData.nationalId}
               onChange={handleChange}
               error={errors.nationalId || undefined}
-              helper={t("nationalIdHelper")}
+              helper={nnLabels[language].helper}
             />
-
-            <div className="grid-2">
-              <Field
-                id="firstName"
-                name="firstName"
-                label={t("firstNameLabel")}
-                autoComplete="given-name"
-                value={formData.firstName}
-                onChange={handleChange}
-                error={errors.firstName || undefined}
-              />
-              <Field
-                id="lastName"
-                name="lastName"
-                label={t("lastNameLabel")}
-                autoComplete="family-name"
-                value={formData.lastName}
-                onChange={handleChange}
-                error={errors.lastName || undefined}
-              />
-            </div>
 
             <Field
               id="email"
