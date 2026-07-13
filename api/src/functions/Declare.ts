@@ -551,14 +551,36 @@ export async function Declare(
     // Règle métier : le résident peut corriger sa déclaration. Les nouveaux
     // totaux remplacent les anciens, la contribution est recalculée ;
     // le champ Paid n'est PAS modifié.
-    const existing = await queryItems(
+    //
+    // ⚠ CORRECTIF DU 13/7/2026 (bug de production) : ce filtre portait AUSSI
+    // sur le mois (« … and fields/Month eq 4 »). Or `Month` n'est PAS une
+    // colonne indexée — et depuis le retrait du header
+    // HonorNonIndexedQueriesWarningMayFailRandomly, Graph refuse par un 400
+    // TOUT $filter touchant une colonne non indexée, MÊME sur une petite liste
+    // (le seuil des 5000 n'est pas la condition du refus : c'est seulement le
+    // moment où l'ancien header cessait de masquer le problème). Résultat :
+    // /api/declare tombait en 500 à CHAQUE déclaration.
+    //
+    // Correction : on filtre sur le SEUL FedasilNumber (indexé), ce qui borne
+    // déjà la requête à 3 lignes au maximum (un résident n'a que 3 mois dans
+    // un trimestre), et on sélectionne le mois EN JAVASCRIPT. Aucun index
+    // supplémentaire à créer ni à maintenir en production — et rien à oublier
+    // lors de la réplication sur le tenant Fedasil.
+    const residentRows = await queryItems(
       siteId,
       cumulListId,
-      `${buildFilter(SP_CUMUL_FA_FIELD, fedasilNumber, SP_FA_IS_NUMBER)} and fields/${SP_MONTH_FIELD} eq ${month}`,
+      buildFilter(SP_CUMUL_FA_FIELD, fedasilNumber, SP_FA_IS_NUMBER),
       [SP_MONTH_FIELD],
       token,
       context
     );
+
+    const existing = residentRows.filter((row) => {
+      const raw = row.fields[SP_MONTH_FIELD];
+      const rowMonth =
+        typeof raw === "number" ? raw : Number(String(raw ?? "").trim());
+      return rowMonth === month;
+    });
 
     if (existing.length > 0) {
       const patchRes = await fetch(
