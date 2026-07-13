@@ -212,6 +212,28 @@ justifié.
 > **paramétrable** (et le justifier par écrit protège autant le résident que le
 > service).
 
+#### ✅ FIXTURES DE TEST DISPONIBLES (13/7/2026)
+
+Le script `npm run sp:seed` (§7.4 de l'état projet) génère dans `simulation/`
+tout ce qu'il faut pour développer ce module **avant** de disposer du vrai flux
+BCSS :
+
+| Fichier | Contenu |
+|---|---|
+| `BCSS-2025-T1.csv` … `BCSS-2026-T1.csv` | 5 fichiers d'import trimestriels : **brut DMFA par NN** (`NN;Nom;Prenom;Annee;Trimestre;BrutTrimestriel`) |
+| `BCSS-cle-de-correction.csv` | **La classe ATTENDUE** pour chaque dossier × trimestre, avec net réel, net déclaré et écart en % |
+
+La clé de correction permet de **valider objectivement le classement** produit
+par l'écran de contrôle : les quatre classes du tableau ci-dessus y sont
+représentées (`Conforme`, `EcartAControler`, `BcssSansDeclaration`,
+`DeclareSansBCSS`). Les données simulées incluent délibérément ~8 % de
+sous-déclarants, ~4 % de salariés BCSS sans aucune déclaration (le cas grave) et
+~8 % de déclarés sans trace BCSS (le cas bénin).
+
+⚠ Le **format réel** du fichier BCSS reste à obtenir (question ouverte §5.7) :
+ces fixtures suivent une structure plausible, pas la structure officielle. Elles
+servent à développer la LOGIQUE de contrôle, pas le parseur définitif.
+
 ---
 
 ### Module 6 — Transversal : traçabilité et droits
@@ -401,6 +423,11 @@ Hérités du portail résident, et enrichis au fil des sessions :
 
 | Date | Décision |
 |---|---|
+| **13/7/2026** | **Jeu de données de simulation** créé sur le site de test (`npm run sp:seed`) : 1 845 résidents, ~14 800 déclarations, 20 113 lignes Soldes, 7 456 virements, + fixtures BCSS du module 5 (5 CSV + clé de correction). Les 6 modules peuvent désormais se développer contre des données vivantes. |
+| **13/7/2026** | **Index SharePoint posés** sur toutes les listes du site de test ; header `HonorNonIndexedQueriesWarningMayFailRandomly` RETIRÉ du code (fail fast). ⚠ En production : **index AVANT déploiement du code**, sans exception. |
+| **13/7/2026** | **Volume de référence établi** : ~1 700 déclarations/mois observées, **~2 000 retenues pour le dimensionnement**. → KB-Cumul ≈ 6 000 lignes/trimestre (franchit les 5 000 au 3ᵉ mois) ; **KB-Paiements ≈ 24 000 lignes/an sans jamais tourner → PREMIER candidat SQL**, avant les KB-Cumul. Chiffres à reprendre dans la note d'arbitrage. |
+| **13/7/2026** | **Bascule trimestrielle automatique — option B retenue** : liste `Config` (trimestre actif + année) écrite par `sp:rotate` en fin de rotation, lue par le code avec cache + repli. Option « déduire du calendrier » ÉCARTÉE : la bascule doit suivre la ROTATION, pas la DATE (sinon données vieilles d'un an affichées tant que la rotation n'a pas tourné). `Config` deviendra la **source de vérité partagée** entre portail et app staff. *Cadré, non commencé.* |
+| **13/7/2026** | **Historique multi-trimestres résident** (≥ 4 trimestres, courant compris) : trimestre COURANT lu dans KB-Cumul (fraîcheur), trimestres ANTÉRIEURS lus dans **Soldes** (permanence). Confirme le rôle de Soldes comme mémoire. *Cadré, non commencé — à faire APRÈS le chantier `Config`.* |
 | 12/7/2026 | **§3 tranchée** : liste « Soldes » (granularité mois, photo complète) créée et synchronisée sur le tenant de test (ID `610bf274-1738-4323-af0a-8c108945a1d9`) ; règle de vérité KB-Cumul ↔ Soldes ; migration Azure SQL différée sans blocage (note d'arbitrage à rédiger — §5 point 10). |
 | 12/7/2026 | **Codes techniques neutres** pour toutes les valeurs stockées (`PayStatus` = `Paid`/`Partial`/`Unpaid`) ; la traduction FR/NL est une affaire d'affichage. |
 | 12/7/2026 | **Discipline « 5000 »** érigée en principe de conception (index, filtres composés, `YearMonth`, agrégats précalculés, vigilance délégation). |

@@ -81,12 +81,42 @@ mettre `Paid` à jour depuis la dernière synchronisation :
 > L'archive JSON/CSV reste la sauvegarde « brute » ; la mémoire APPLICATIVE
 > est la liste Soldes (étape A).
 
+### B-bis. 🔴 POSER L'INDEX SUR LA LISTE QUI VIENT D'ÊTRE VIDÉE — FENÊTRE UNIQUE
+
+> ⚠ **C'EST LE SEUL MOMENT DE L'ANNÉE OÙ C'EST POSSIBLE.** SharePoint refuse de
+> créer un index sur une liste de **plus de 5 000 éléments**. À ~1 700-2 000
+> déclarations/mois (§6.0 de l'état projet), la liste franchit ce seuil **au 3ᵉ
+> mois du trimestre**. Une fois franchie, l'index est impossible jusqu'à la
+> rotation SUIVANTE — et entretemps `/api/me` et `/api/declare` échouent pour
+> les résidents (le header `HonorNonIndexedQueriesWarningMayFailRandomly` a été
+> RETIRÉ le 13/7 : les requêtes non indexées échouent désormais franchement).
+
+- [ ] Ouvrir la liste qui vient d'être vidée (ex. `KB-Cumul T4`) dans
+      SharePoint → **Paramètres de la liste** → **Colonnes indexées**.
+- [ ] Vérifier / créer l'index sur **`FedasilNumber`**.
+- [ ] Si l'index existe déjà (cas normal — les listes du site de test ont été
+      indexées le 13/7 et l'index SURVIT au vidage) : ne rien faire, simplement
+      cocher.
+- [ ] ⚠ **Sur une liste RECRÉÉE** (provisioning neuf) : `sharepoint-schema.json`
+      porte `"indexed": true` sur `FedasilNumber` → `sp:provision` crée la
+      colonne déjà indexée. Rien à faire non plus.
+
 ### C. Basculer les variables de la Static Web App (portail Azure)
+
+> ⚠ **PIÈGE VÉRIFIÉ (13/7/2026)** : dans `Me.ts`, **`SP_CUMUL_LIST_ID` est
+> PRIORITAIRE sur `SP_CUMUL_LIST_NAME`**. Si l'ID pointe encore sur l'ancienne
+> liste, changer le seul nom **n'a aucun effet** — et le portail continue de
+> servir l'ancien trimestre **sans le moindre message d'erreur**. Modifier les
+> DEUX, toujours.
+>
+> 🔜 Cette étape est appelée à DISPARAÎTRE : le chantier §10.0 de l'état projet
+> (liste `Config` écrite par `sp:rotate`) rendra la bascule automatique.
 
 Portail Azure → Static Web App `residentapp` → Configuration :
 
 - [ ] `SP_CUMUL_LIST_NAME` → `KB-Cumul T4`
-- [ ] `SP_CUMUL_LIST_ID` → ID de T4 (tableau §2)
+- [ ] `SP_CUMUL_LIST_ID` → ID de T4 (tableau §2) — **⚠ ne pas l'oublier : il
+      prime sur le nom**
 - [ ] `SP_CUMUL_PREV_LIST_NAME` → `KB-Cumul T3`
 - [ ] Enregistrer.
 

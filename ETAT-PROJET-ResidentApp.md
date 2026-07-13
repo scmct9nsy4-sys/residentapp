@@ -1,6 +1,6 @@
 # ÉTAT DU PROJET — ResidentApp (Fedasil)
 
-**Version 7 — 12 juillet 2026** (remplace la v6 du même jour — session « liste Soldes »)
+**Version 8 — 13 juillet 2026** (remplace la v7 du 12/7 — session « simulation, index SharePoint et fiabilité des requêtes »)
 
 ---
 
@@ -436,6 +436,81 @@ CONCEPTION-STAFF-APP §6). Volumétrie constatée : ~2000 lignes/trimestre
 
 ## 6. Données SharePoint
 
+### 6.0 VOLUME DE RÉFÉRENCE (établi le 13/7/2026) — chiffre structurant
+
+Deux chiffres, à ne jamais confondre :
+
+| | Valeur | Nature |
+|---|---|---|
+| **Volume observé** | **~1 700 déclarations/mois** | FAIT — mesuré sur le mois d'octobre 2025 réel (extraction KB-Cumul T4) |
+| **Hypothèse de dimensionnement** | **~2 000 déclarations/mois** | MARGE — retenue pour tout calcul de capacité |
+
+Conséquences directes, à l'hypothèse de dimensionnement :
+
+- une liste **KB-Cumul atteint ~6 000 lignes par trimestre** → elle franchit le
+  seuil SharePoint des 5 000 éléments **dès le 3ᵉ mois de chaque trimestre**,
+  sans marge ;
+- **KB-Paiements** croît de **~24 000 lignes/an** et **ne tourne JAMAIS** :
+  c'est la seule liste sans mécanisme de purge → **premier candidat à la
+  migration SQL** (§10), avant les KB-Cumul qui bénéficient au moins de la
+  rotation trimestrielle ;
+- **Soldes** dépasse 20 000 lignes dès la première année (confirmé : 20 113
+  lignes dans le jeu de simulation) — d'où ses cinq colonnes indexées.
+
+Ces chiffres sont la base chiffrée de la note d'arbitrage SQL à présenter à la
+hiérarchie.
+
+### 6.1 INDEX SHAREPOINT (posés le 13/7/2026) — fiabilité, pas performance
+
+⚠ **Ce ne sont pas des optimisations : ce sont les index qui empêchent le
+portail de tomber en fin de trimestre.**
+
+`Me.ts` et `Declare.ts` ont TOUJOURS utilisé `$filter` (contrairement à ce qui
+avait pu être supposé : il n'y a jamais eu de fetch-all dans ces fonctions).
+Mais ils l'utilisaient avec le header `Prefer:
+HonorNonIndexedQueriesWarningMayFailRandomly`, qui autorise le filtrage sur
+colonne **non indexée** — au prix, comme son nom l'indique littéralement, d'un
+échec **aléatoire** dès que la liste dépasse 5 000 éléments. À ~1 700-2 000
+déclarations/mois, cela signifiait : **`/api/me` et `/api/declare` se seraient
+mis à échouer au 3ᵉ mois de chaque trimestre, exactement quand les résidents
+déclarent le plus.** Panne de production évitée de justesse.
+
+Index en place sur le site de test (`Resident_Test`) :
+
+| Liste | Colonnes indexées | Pourquoi |
+|---|---|---|
+| **Residents List** | `EntraOid`, `FedasilNumber`, `Title` (NN) | `EntraOid` = **chemin critique du login** : `/api/me` résout l'identité par oid à CHAQUE connexion. `Title` = éligibilité par NN (`/api/pre-inscription`). |
+| **KB-Cumul T1–T4** | `FedasilNumber` | Lecture des déclarations d'UN résident (portail). |
+| **KB-Paiements** | `Status`, `FedasilNumber` | `Status` = LA requête du module 3 (file de lettrage). |
+| **Soldes** | `FedasilNumber`, `Year`, `Quarter`, `YearMonth`, `PayStatus` | Posées dès la création (§5.20). |
+
+Le schéma `sharepoint-schema.json` porte désormais `"indexed": true` sur ces
+colonnes : toute liste **recréée** par `sp:provision` le sera avec ses index.
+
+**⚠ DEUX RÈGLES ABSOLUES :**
+
+1. **Un index ne peut être créé que si la liste compte MOINS de 5 000
+   éléments.** Au-delà, SharePoint refuse. Pour une KB-Cumul (qui atteint le
+   seuil au 3ᵉ mois), **la seule fenêtre sûre est juste après la rotation
+   trimestrielle, sur liste vide** → étape intégrée à
+   PROCEDURE-BASCULE-TRIMESTRE.md.
+2. **Lors du passage en production : poser les index sur les listes Fedasil
+   AVANT de déployer le code.** Le header `HonorNonIndexed…` ayant été retiré
+   (voir ci-dessous), déployer le code sur des listes non indexées casserait
+   **immédiatement** le portail pour TOUS les résidents. L'ordre n'est pas
+   négociable.
+
+**Retrait du header (13/7/2026)** : `Prefer:
+HonorNonIndexedQueriesWarningMayFailRandomly` a été supprimé de `queryItems()`
+dans `Me.ts` et `Declare.ts`. Raison : avec les index en place il est inutile,
+et son absence transforme une panne **aléatoire et tardive** (la pire à
+diagnostiquer) en panne **franche et immédiate**. Les deux fonctions
+journalisent en outre explicitement la cause probable sur un statut 400/403/503
+(« colonne de filtre NON INDEXÉE sur une liste de plus de 5 000 éléments »).
+**Fail fast plutôt que fail random.**
+
+### 6.2 Listes
+
 Site : `giapplab.sharepoint.com/sites/Resident_Test` (tenant de TEST — à
 répliquer sur le tenant Fedasil ; ⚠ vérifier alors les **paramètres régionaux
 du site** : fuseau Bruxelles + locale fr-BE, le défaut SharePoint est le
@@ -527,6 +602,51 @@ La structure SharePoint est décrite dans le dépôt et appliquée en une comman
 - Bénéfice réalisé (12/7) : la liste « Soldes » est née d'une entrée de
   schéma + `sp:provision` (13 créations), et vit par `sp:soldes`.
 
+### 7.4 `npm run sp:seed` — jeu de données de SIMULATION (créé le 13/7/2026)
+
+`scripts/seed-simulation.ts` reconstruit **une année complète d'activité**
+(janvier 2025 → 20 mai 2026, « aujourd'hui simulé ») pour développer les modules
+de l'app staff sans attendre les données réelles.
+
+**Ce qu'il génère** (site de test, chiffres du run du 13/7) :
+
+- **1 845 résidents** (prénoms/noms francophones réalistes remplaçant les
+  `*****` anonymisés ; NN, FA, Email et EntraOid réels CONSERVÉS) dont
+  12 arrivées fictives ;
+- **~14 800 déclarations** réparties sur les 4 KB-Cumul selon la chronologie
+  simulée (T3 = T3 2025, T4 = T4 2025, T1 = T1 2026, T2 = avril 2026 déclaré à
+  85 %, mai non déclaré) ;
+- **20 113 lignes Soldes** (janv. 2025 → mars 2026 ; T1-T2 2025 n'existent QUE
+  là, leurs listes ayant été « réutilisées » dans la chronologie) ;
+- **7 456 virements** dans KB-Paiements : payeurs ponctuels (communication
+  structurée), paiements fractionnés, communications libres (file de lettrage
+  du module 3) et 6 anomalies ;
+- **fixtures BCSS du module 5** dans `simulation/` : 5 CSV trimestriels (brut
+  DMFA par NN) + `BCSS-cle-de-correction.csv` donnant la **classe attendue** par
+  dossier × trimestre (Conforme / EcartAControler / BcssSansDeclaration /
+  DeclareSansBCSS) → permet de valider objectivement le futur écran de contrôle.
+
+**Garanties :**
+
+- **Les 2 008 lignes réelles de KB-Cumul T4 ne sont JAMAIS touchées** — elles
+  servent de base statistique (fourchette et distribution des nets) et de
+  population de départ.
+- **Point fixe vérifié** : un `--dry-run` après génération affiche **0 opération
+  sur toutes les listes**. Le jeu est reproductible à l'identique (graine fixe).
+- **Purge chirurgicale** (`npm run sp:seed -- --purge`, confirmation « PURGER ») :
+  triple marquage `StructuredText = "SIM"` (KB-Cumul), Title préfixé `SIM-`
+  (paiements), FA préfixé `FA99` (résidents fictifs). ⚠ Les prénoms/noms
+  remplacés ne sont PAS restaurés (les originaux étaient anonymisés).
+
+Commandes : `--dry-run` (aucune écriture SharePoint, mais les fichiers
+`simulation/` sont générés) · `--purge` · `--seed=<n>`. Écritures par lots Graph
+`$batch` (20 op./requête), jeton rafraîchi automatiquement, reprise sur 429/503
+et 401.
+
+⚠ Le jeu actuel tourne à ~1 480 déclarations/mois (dérivé du réel). Pour un test
+de charge à l'**hypothèse de dimensionnement (2 000/mois, §6.0)**, il faudra
+ajuster la constante et purger/regénérer (backlog §10).
+
 ## 8. Configuration (variables d'environnement)
 
 Sur la SWA **et** dans `api/local.settings.json` (dev) :
@@ -612,6 +732,57 @@ NN formaté + modulo 97 client, conformité ESLint react-hooks v6).
 (§5.16). Prévoir une **répétition à blanc** avant (archivage `--export-only`
 sur les données réelles, relecture de PROCEDURE-BASCULE-TRIMESTRE.md,
 checklist du jour J : variables SWA + re-run du DERNIER workflow).
+
+0. 🔴 **CHANTIER OUVERT — Bascule automatique du trimestre (liste `Config`)**
+   *Décidé le 13/7, cadré, NON commencé — à démarrer à la prochaine session.*
+
+   **Problème constaté** : le trimestre affiché par le portail est figé dans les
+   variables d'environnement (`SP_CUMUL_LIST_NAME` / `SP_CUMUL_LIST_ID`). Il
+   faut donc les modifier à chaque bascule ET redéployer. ⚠ Piège vérifié :
+   **`SP_CUMUL_LIST_ID` est PRIORITAIRE sur le nom** (`Me.ts` §507-509) — changer
+   le seul nom ne produit aucun effet, sans le moindre message d'erreur.
+
+   **Solution retenue (option B)** : une liste SharePoint **`Config`** (une
+   ligne : trimestre actif, année) écrite par **`sp:rotate` À LA FIN de la
+   rotation** (donc après archivage et vidage réussis). `Me.ts` / `Declare.ts`
+   la lisent, avec **cache mémoire** (~5 min, les Functions restent chaudes) et
+   **repli sur les variables d'environnement** si `Config` est illisible.
+   → La bascule métier devient la rotation elle-même. Plus de variable, plus de
+   redéploiement, plus d'oubli.
+
+   **Option A écartée** (déduire le trimestre de la date) : le 1ᵉʳ avril à 00h00
+   le code basculerait sur `KB-Cumul T2`, qui contient encore **T2 de l'année
+   précédente** tant que la rotation n'a pas tourné → les résidents verraient
+   des données vieilles d'un an. La bascule doit suivre la ROTATION, pas le
+   CALENDRIER (rappel : la bascule T2→T3 réelle est prévue le **1er août**, pas
+   le 1er juillet — un mois de décalage assumé).
+
+   Bonus : l'app staff a le même besoin → `Config` devient la source de vérité
+   unique et partagée entre les deux applications.
+
+0bis. 🔴 **CHANTIER OUVERT — Historique multi-trimestres pour le résident**
+   *Décidé le 13/7, cadré, NON commencé — À FAIRE APRÈS le chantier `Config`.*
+
+   **Besoin métier (confirmé le 13/7)** : le résident doit pouvoir consulter
+   **au moins les 4 derniers trimestres, courant compris**.
+
+   **Pourquoi ce n'est pas possible aujourd'hui** : le portail n'offre que deux
+   fenêtres (`current` / `previous`), et surtout les KB-Cumul ne CONTIENNENT pas
+   4 trimestres — la rotation vide la liste réutilisée (chaque trimestre survit
+   ~9 mois, §5.16). Le 4ᵉ trimestre est toujours en sursis.
+
+   **Architecture retenue** :
+   - **trimestre COURANT → KB-Cumul** (lecture directe : c'est là qu'on écrit,
+     fraîcheur immédiate ; lire Soldes ferait disparaître une déclaration
+     jusqu'à la prochaine synchro — inacceptable) ;
+   - **trimestres ANTÉRIEURS → Soldes** (mémoire permanente, indexée,
+     insensible aux rotations, §5.20). Le portail peut alors offrir 4, 8 ou tout
+     l'historique.
+
+   Touche `Me.ts` (nouvelle lecture Soldes) **et le frontend** (`Portail.tsx` :
+   le bouton « trimestre précédent » devient un sélecteur ; l'API doit indiquer
+   les trimestres disponibles). Chantier volontairement DÉCOUPÉ du précédent
+   pour ne pas mélanger auth, API et UI dans un même diff.
 
 1. **Gouvernance de l'ANNÉE** : modèle confirmé = 4 listes permanentes à ID
    fixes, archivées puis vidées à la bascule (§5.16-5.17). Reste : nommer les
@@ -849,44 +1020,112 @@ checklist du jour J : variables SWA + re-run du DERNIER workflow).
 
 ---
 
+## 11bis. Leçons de la session du 13/7 (simulation, index, fiabilité)
+
+- **`HonorNonIndexedQueriesWarningMayFailRandomly` porte son nom
+  littéralement.** Ce header n'est pas un contournement bénin : il autorise une
+  requête filtrée sur colonne non indexée, qui **échouera aléatoirement** une
+  fois les 5 000 éléments dépassés. Sur une liste qui franchit le seuil au 3ᵉ
+  mois de chaque trimestre, c'est une panne de production programmée, au pire
+  moment. **Indexer, puis retirer le header** : on préfère une panne franche et
+  immédiate à une panne aléatoire et tardive. *Fail fast plutôt que fail
+  random.*
+
+- **VÉRIFIER LE CODE AVANT DE RECOMMANDER UNE RÉÉCRITURE (leçon répétée).**
+  Une recommandation de réécrire `Me.ts` « pour passer en `$filter` » a été
+  formulée sur la base d'une supposition : or `Me.ts` et `Declare.ts`
+  utilisaient DÉJÀ `$filter` depuis le début. Le seul fetch-all du projet est
+  dans `Subscription.ts` (liste Aidants — petite liste, justifié et commenté).
+  Le vrai problème était ailleurs (le header), et n'a été trouvé qu'en OUVRANT
+  le fichier. *C'est la deuxième fois que cette erreur se produit sur ce même
+  fichier.*
+
+- **Un PRNG déterministe ne suffit PAS à rendre une simulation reproductible :
+  il faut aussi que sa CONSOMMATION ne dépende pas de l'état qu'il a lui-même
+  créé.** Bug réel rencontré : au 1er run, un NN fictif était généré (4 tirages
+  consommés) pour les résidents absents de Residents List ; au 2ᵉ run ces
+  résidents EXISTAIENT (créés au 1er run), leur NN était donc lu et non
+  généré → 4 tirages en moins → **tout le profil suivant décalé** (salaires,
+  rythme de travail). Correctif : **un flux `mulberry32(hash32("nn:"+seed+fa))`
+  DÉDIÉ par donnée générée**. Test de non-régression : un `--dry-run` après
+  génération doit afficher **0 opération** (point fixe).
+
+- **Sur un run long (40 000+ écritures), le jeton Graph EXPIRE** (~60 min).
+  Sans rafraîchissement, chaque lot répond 401, traité comme un échec définitif
+  et noyé dans les logs. Tout script d'écriture massive doit **rafraîchir son
+  jeton (~40 min) et traiter le 401 comme une REPRISE**, pas comme une erreur.
+
+- **Un compteur de progression qui n'affiche qu'un lot sur N ment sur la fin.**
+  « 7409/7450 » laissait croire à 41 lignes perdues alors que tout était écrit.
+  Toujours afficher un **bilan exact en fin de phase** (`X/X écrit(s), N
+  échec(s), N abandonnée(s)`).
+
+- **L'ordre index → déploiement n'est pas négociable.** Le header retiré, du
+  code déployé sur des listes non indexées casse le portail **immédiatement**
+  pour tous les résidents. En production : **index d'abord, code ensuite.**
+
+- **Distinguer volume OBSERVÉ et hypothèse de DIMENSIONNEMENT** (§6.0) : ~1 700
+  déclarations/mois est un fait mesuré ; ~2 000 est une marge de sécurité.
+  Confondre les deux dans une note à la hiérarchie coûterait en crédibilité ;
+  les séparer la renforce.
+
 ## 12. Prompt de relance (à coller au début de la prochaine conversation)
 
 > Bonjour Claude. Je poursuis le développement de ResidentApp (portail Fedasil
 > pour résidents, React + TypeScript + CSS pur, Azure Static Web Apps +
 > Functions). CONTEXTE : tout l'état du projet est dans
-> ETAT-PROJET-ResidentApp.md (v6 du 12 juillet 2026) dans les fichiers du projet
-> — lis-le d'abord, en particulier la section 5 « Règles métier » et la section
-> 4 « Architecture Azure vs Entra ». En résumé : le parcours complet est validé
-> en production, l'authentification personnalisée Entra et le matching par `oid`
-> sont opérationnels, le sélecteur de profils familiaux (familles ET aidantes
-> sociales avec garde-fou « ResidentApp Aidants », comptes internes liés
-> directement, règle « un dossier = un compte lié ») est validé en production,
-> le formulaire de pré-inscription est minimal (NN + e-mail + langue, formaté
-> à la volée avec contrôle modulo 97 — §5.19), la session ergonomie du 12/7
-> est terminée (statuts de paiement colorés + règle d'échéance §5.18, montant
-> libre, adaptations mobiles — voir CHANGELOG-session-2026-07-12.md), la
-> bascule trimestrielle est outillée
-> (PROCEDURE-BASCULE-TRIMESTRE.md + npm run sp:rotate — PREMIÈRE BASCULE
-> RÉELLE T2 → T3 le 1er août 2026, désormais avec les étapes sp:soldes A et
-> E de la procédure), la liste permanente « Soldes » est créée et
-> synchronisée (§5.20, npm run sp:soldes), et un provisioning
-> déclaratif des 8 listes SharePoint est en place (npm run sp:inspect /
-> sp:provision). La migration SQL/Dataverse est analysée mais en attente de
-> décision hiérarchique.
-> Les fichiers actuels du code sont dans le projet : App.tsx, Portail.tsx,
-> fedasil.css, main.tsx, Subscription.ts, Me.ts, Declare.ts,
-> public/staticwebapp.config.json, sharepoint-schema.json,
-> scripts/provision-sharepoint.ts, scripts/rotate-quarter.ts,
-> scripts/snapshot-soldes.ts.
-> OBJECTIF DE CETTE DISCUSSION : [choisir dans la section 10 « Reste à faire »,
-> par exemple :]
-> * Répétition à blanc de la bascule T2 → T3 (échéance : 1er août — priorité) ;
-> * Processus de rappels de paiement (la liste « Soldes » est FAITE — §5.20) ;
-> * Lettrage des paiements (import CSV bancaire, candidat Power Automate) ;
-> * Durcissements production (Sites.Selected, NN_CHECKSUM_STRICT, CAPTCHA…) ;
-> * Réplication sur le tenant Fedasil (checklist §10 point 11).
+> ETAT-PROJET-ResidentApp.md (**v8 du 13 juillet 2026**) dans les fichiers du
+> projet — lis-le d'abord, en particulier **§6.0 (volume de référence)**,
+> **§6.1 (index SharePoint)**, la section 5 « Règles métier » et la section 4
+> « Architecture Azure vs Entra ».
+>
+> EN RÉSUMÉ : le parcours résident complet est validé en production
+> (authentification Entra personnalisée, matching par `oid`, sélecteur de
+> profils familiaux et aidants, formulaire minimal NN + e-mail + langue).
+> La liste permanente « Soldes » existe (§5.20, `npm run sp:soldes`), le
+> provisioning est déclaratif (`sharepoint-schema.json` + `sp:provision`), et la
+> bascule trimestrielle est outillée (PROCEDURE-BASCULE-TRIMESTRE.md +
+> `sp:rotate`) — **PREMIÈRE BASCULE RÉELLE T2 → T3 le 1er août 2026**.
+>
+> NOUVEAU DEPUIS LE 13/7 :
+> * un **jeu de données de simulation complet** est en place sur le site de test
+>   (`npm run sp:seed`, §7.4) : 1 845 résidents, ~14 800 déclarations, 20 113
+>   lignes Soldes, 7 456 virements, + les **fixtures BCSS du module 5** dans
+>   `simulation/` (5 CSV + clé de correction). Point fixe vérifié, purge
+>   chirurgicale disponible ;
+> * **les index SharePoint sont posés** sur toutes les listes du site de test
+>   (§6.1) et le header `HonorNonIndexedQueriesWarningMayFailRandomly` a été
+>   RETIRÉ de `Me.ts` et `Declare.ts` (fail fast plutôt que fail random) ;
+> * le **volume réel est établi** : ~1 700 déclarations/mois observées, ~2 000
+>   retenues pour le dimensionnement (§6.0) → une KB-Cumul franchit les 5 000
+>   éléments au 3ᵉ mois de chaque trimestre, et KB-Paiements croît de ~24 000
+>   lignes/an SANS jamais tourner (premier candidat SQL).
+>
+> ⚠ TOUT CE QUI PRÉCÈDE EST SUR LE SITE DE TEST (`Resident_Test`). Rien n'est
+> répliqué en production Fedasil : cela se fera après validation métier, et
+> **les index devront y être posés AVANT de déployer le code** (sinon le portail
+> casse immédiatement — §6.1).
+>
+> OBJECTIF DE CETTE DISCUSSION — **chantier §10.0 : bascule automatique du
+> trimestre via une liste `Config`** (décidé et cadré le 13/7, non commencé) :
+> une liste SharePoint `Config` (trimestre actif + année), écrite par
+> `sp:rotate` À LA FIN de la rotation, lue par `Me.ts` / `Declare.ts` avec cache
+> mémoire et repli sur les variables d'environnement. Objectif : supprimer la
+> modification manuelle de `SP_CUMUL_LIST_NAME` / `SP_CUMUL_LIST_ID` à chaque
+> bascule (⚠ piège : l'ID est PRIORITAIRE sur le nom). Livrables attendus :
+> entrée dans `sharepoint-schema.json`, mise à jour de `scripts/rotate-quarter.ts`,
+> lecture dans `Me.ts` et `Declare.ts`, mise à jour de
+> PROCEDURE-BASCULE-TRIMESTRE.md.
+> ENSUITE (chantier §10.0bis, à NE PAS mélanger avec le précédent) : historique
+> multi-trimestres pour le résident (≥ 4 trimestres) — trimestre courant lu dans
+> KB-Cumul, trimestres antérieurs lus dans Soldes, + sélecteur dans
+> `Portail.tsx`.
+>
 > Rappel de ma façon de travailler : je suis débutant confirmé, je préfère des
 > fichiers complets copier-coller prêts plutôt que des patchs, un pas-à-pas
-> pour les manipulations Azure/Entra, et je commite via l'interface Git de
-> VS Code (donne-moi juste les messages de commit). Avant tout push :
-> npm run build à la racine ET dans api/.
+> pour les manipulations Azure/Entra/Power Platform, et je commite via
+> l'interface Git de VS Code (donne-moi juste les messages de commit). Avant
+> tout push : `npm run build` à la racine ET dans `api/`.
+> ⚠ Et une consigne née de deux erreurs répétées : **ouvre et lis les fichiers
+> concernés AVANT de recommander une réécriture** — ne suppose pas ce que
+> contient le code.
