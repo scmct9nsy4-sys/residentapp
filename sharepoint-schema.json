@@ -26,8 +26,7 @@
           "name": "Title",
           "type": "text",
           "documentOnly": true,
-          "indexed": true,
-          "note": "Colonne intégrée SharePoint. Contient le NUMÉRO NATIONAL (SP_NATIONALID_FIELD=Title). INDEXÉE : /api/pre-inscription cherche l'éligibilité par NN."
+          "note": "Colonne intégrée SharePoint. Contient le NUMÉRO NATIONAL (SP_NATIONALID_FIELD=Title). À confirmer en ouvrant une ligne."
         },
         {
           "name": "FirstName",
@@ -51,14 +50,12 @@
           "name": "FedasilNumber",
           "type": "text",
           "documentOnly": true,
-          "indexed": true,
-          "note": "Clé maîtresse (FA). Unique et permanente. Saisie par le staff. INDEXÉE : jointure de toutes les autres listes."
+          "note": "Clé maîtresse (FA). Unique et permanente. Saisie par le staff."
         },
         {
           "name": "EntraOid",
           "type": "text",
-          "indexed": true,
-          "note": "SEULE colonne à créer. oid du compte invité Entra. Écrit par /api/pre-inscription (et auto-réparation dans /api/me et /api/declare). Plusieurs lignes peuvent porter le même oid (familles). Variable SP_RESIDENT_OID_FIELD=EntraOid. INDEXÉE (13/7/2026) : c'est LE chemin critique du login — /api/me résout l'identité par oid à CHAQUE connexion. Sans index, fetch-all des ~1900 résidents à chaque appel."
+          "note": "SEULE colonne à créer. oid du compte invité Entra. Écrit par /api/pre-inscription (et auto-réparation dans /api/me et /api/declare). Plusieurs lignes peuvent porter le même oid (familles). Variable SP_RESIDENT_OID_FIELD=EntraOid."
         }
       ]
     },
@@ -83,61 +80,168 @@
       "displayName": "KB-Cumul T4",
       "description": "Déclarations mensuelles du trimestre 4 (année implicite — gouvernance de l'année : voir option 2 de la feuille de route). Une ligne = un mois pour un FA (totaux).",
       "columns": [
-        { "name": "FedasilNumber", "type": "text", "documentOnly": true, "indexed": true, "note": "FA (type texte confirmé par sp:inspect -> SP_FA_IS_NUMBER reste false). INDEXÉE (13/7/2026) : chemin critique du portail résident (Me.ts / Declare.ts cherchent les lignes d'UN résident). Sans index, $filter échoue silencieusement -> fetch-all des ~5000 lignes du trimestre. ⚠ SEUIL : un index ne peut être posé que si la liste compte MOINS de 5000 éléments. À ~1700 déclarations/mois, la liste atteint le seuil au 3e mois du trimestre : l'index se pose donc sur une liste VIDE, juste après la rotation (voir PROCEDURE-BASCULE-TRIMESTRE.md)." },
-        { "name": "Month", "type": "number", "documentOnly": true, "note": "Mois 1-12. NON indexée volontairement : l'app staff lit Soldes (indexée), pas les KB-Cumul." },
-        { "name": "NetSalary", "type": "number", "documentOnly": true },
-        { "name": "GrossSalary", "type": "number", "documentOnly": true },
-        { "name": "Contribution", "type": "number", "documentOnly": true },
-        { "name": "Paid", "type": "number", "documentOnly": true, "note": "CUMUL payé pour le mois (plusieurs virements possibles avec la même communication structurée : paiement en plusieurs fois). Détail dans KB-Paiements." },
-        { "name": "StructuredCom", "type": "text", "documentOnly": true },
-        { "name": "StructuredText", "type": "text", "documentOnly": true, "note": "Colonne existante (usage historique)." }
+        {
+          "name": "FedasilNumber",
+          "type": "text",
+          "documentOnly": true,
+          "note": "FA (type texte confirmé par sp:inspect -> SP_FA_IS_NUMBER reste false)."
+        },
+        {
+          "name": "Month",
+          "type": "number",
+          "documentOnly": true
+        },
+        {
+          "name": "NetSalary",
+          "type": "number",
+          "documentOnly": true
+        },
+        {
+          "name": "GrossSalary",
+          "type": "number",
+          "documentOnly": true
+        },
+        {
+          "name": "Contribution",
+          "type": "number",
+          "documentOnly": true
+        },
+        {
+          "name": "Paid",
+          "type": "number",
+          "documentOnly": true,
+          "note": "CUMUL payé pour le mois (plusieurs virements possibles avec la même communication structurée : paiement en plusieurs fois). Détail dans KB-Paiements."
+        },
+        {
+          "name": "StructuredCom",
+          "type": "text",
+          "documentOnly": true
+        },
+        {
+          "name": "StructuredText",
+          "type": "text",
+          "documentOnly": true,
+          "note": "Colonne existante (usage historique)."
+        }
       ]
     },
     {
       "displayName": "KB-Cumul T1",
       "description": "Déclarations mensuelles du trimestre 1 (mêmes colonnes que T4). Colonnes CRÉABLES : sur un tenant de test elles sont créées, sur le tenant Fedasil (où la liste existe) elles sont seulement vérifiées.",
       "columns": [
-        { "name": "FedasilNumber", "type": "text", "indexed": true, "note": "INDEXÉE : voir la note de KB-Cumul T4 (index posable uniquement sous 5000 éléments -> après rotation)." },
-        { "name": "Month", "type": "number" },
-        { "name": "NetSalary", "type": "number" },
-        { "name": "GrossSalary", "type": "number" },
-        { "name": "Contribution", "type": "number" },
-        { "name": "Paid", "type": "number" },
-        { "name": "StructuredCom", "type": "text" },
-        { "name": "StructuredText", "type": "text" }
+        {
+          "name": "FedasilNumber",
+          "type": "text"
+        },
+        {
+          "name": "Month",
+          "type": "number"
+        },
+        {
+          "name": "NetSalary",
+          "type": "number"
+        },
+        {
+          "name": "GrossSalary",
+          "type": "number"
+        },
+        {
+          "name": "Contribution",
+          "type": "number"
+        },
+        {
+          "name": "Paid",
+          "type": "number"
+        },
+        {
+          "name": "StructuredCom",
+          "type": "text"
+        },
+        {
+          "name": "StructuredText",
+          "type": "text"
+        }
       ]
     },
     {
       "displayName": "KB-Cumul T2",
       "description": "Déclarations mensuelles du trimestre 2 (mêmes colonnes que T4).",
       "columns": [
-        { "name": "FedasilNumber", "type": "text", "indexed": true, "note": "INDEXÉE : voir la note de KB-Cumul T4 (index posable uniquement sous 5000 éléments -> après rotation)." },
-        { "name": "Month", "type": "number" },
-        { "name": "NetSalary", "type": "number" },
-        { "name": "GrossSalary", "type": "number" },
-        { "name": "Contribution", "type": "number" },
-        { "name": "Paid", "type": "number" },
-        { "name": "StructuredCom", "type": "text" },
-        { "name": "StructuredText", "type": "text" }
+        {
+          "name": "FedasilNumber",
+          "type": "text"
+        },
+        {
+          "name": "Month",
+          "type": "number"
+        },
+        {
+          "name": "NetSalary",
+          "type": "number"
+        },
+        {
+          "name": "GrossSalary",
+          "type": "number"
+        },
+        {
+          "name": "Contribution",
+          "type": "number"
+        },
+        {
+          "name": "Paid",
+          "type": "number"
+        },
+        {
+          "name": "StructuredCom",
+          "type": "text"
+        },
+        {
+          "name": "StructuredText",
+          "type": "text"
+        }
       ]
     },
     {
       "displayName": "KB-Cumul T3",
       "description": "Déclarations mensuelles du trimestre 3 (mêmes colonnes que T4).",
       "columns": [
-        { "name": "FedasilNumber", "type": "text", "indexed": true, "note": "INDEXÉE : voir la note de KB-Cumul T4 (index posable uniquement sous 5000 éléments -> après rotation)." },
-        { "name": "Month", "type": "number" },
-        { "name": "NetSalary", "type": "number" },
-        { "name": "GrossSalary", "type": "number" },
-        { "name": "Contribution", "type": "number" },
-        { "name": "Paid", "type": "number" },
-        { "name": "StructuredCom", "type": "text" },
-        { "name": "StructuredText", "type": "text" }
+        {
+          "name": "FedasilNumber",
+          "type": "text"
+        },
+        {
+          "name": "Month",
+          "type": "number"
+        },
+        {
+          "name": "NetSalary",
+          "type": "number"
+        },
+        {
+          "name": "GrossSalary",
+          "type": "number"
+        },
+        {
+          "name": "Contribution",
+          "type": "number"
+        },
+        {
+          "name": "Paid",
+          "type": "number"
+        },
+        {
+          "name": "StructuredCom",
+          "type": "text"
+        },
+        {
+          "name": "StructuredText",
+          "type": "text"
+        }
       ]
     },
     {
       "displayName": "KB-Paiements",
-      "description": "Paiements bancaires (import CSV hebdomadaire de la banque). Une ligne = UN virement ; un même mois peut être payé en plusieurs virements portant la même communication structurée (Paid dans KB-Cumul = le CUMUL). ⚠ STRUCTURE DE TEST : la liste réelle existe sur le tenant Fedasil — relever ses noms internes avec sp:inspect et ALIGNER ce schéma avant tout provisioning là-bas. ⚠ CROISSANCE ILLIMITÉE (constat du 13/7/2026, simulation) : c'est la SEULE liste qui ne tourne jamais — ~1500 virements/mois, soit ~18000 lignes/an, sans plafond. Les index posés ici (FedasilNumber, Status) DOIVENT donc l'être MAINTENANT, tant que la liste est sous 5000 éléments : au-delà, SharePoint refuse de créer un index. Sans purge ni archivage, cette liste est le premier candidat à la migration SQL (§10).",
+      "description": "Paiements bancaires (import CSV hebdomadaire de la banque). Une ligne = UN virement ; un même mois peut être payé en plusieurs virements portant la même communication structurée (Paid dans KB-Cumul = le CUMUL). ⚠ STRUCTURE DE TEST : la liste réelle existe sur le tenant Fedasil — relever ses noms internes avec sp:inspect et ALIGNER ce schéma avant tout provisioning là-bas.",
       "columns": [
         {
           "name": "Title",
@@ -145,20 +249,55 @@
           "documentOnly": true,
           "note": "Colonne intégrée. Proposition : référence bancaire unique du mouvement (n° extrait/séquence) — clé d'idempotence des imports (pas de doublon si le même CSV est rejoué)."
         },
-        { "name": "PaymentDate", "type": "dateTime", "note": "Date valeur du virement." },
-        { "name": "Amount", "type": "number", "note": "Montant du virement (positif)." },
-        { "name": "StructuredCom", "type": "text", "note": "Communication structurée +++xxx/xxxx/xxxxx+++ si présente et valide (objectif : 100 % des paiements)." },
-        { "name": "FreeCom", "type": "note", "note": "Communication libre (paiements manuels historiques) — file d'attente du lettrage manuel." },
-        { "name": "CounterpartyName", "type": "text", "note": "Nom du donneur d'ordre (aide au lettrage manuel)." },
-        { "name": "CounterpartyIBAN", "type": "text", "note": "IBAN du donneur d'ordre (aide au lettrage manuel)." },
-        { "name": "FedasilNumber", "type": "text", "indexed": true, "note": "FA résolu après lettrage (vide tant que non imputé). INDEXÉE : la fiche 360° liste les virements d'UN résident." },
-        { "name": "Month", "type": "number", "note": "Mois imputé après lettrage." },
+        {
+          "name": "PaymentDate",
+          "type": "dateTime",
+          "note": "Date valeur du virement."
+        },
+        {
+          "name": "Amount",
+          "type": "number",
+          "note": "Montant du virement (positif)."
+        },
+        {
+          "name": "StructuredCom",
+          "type": "text",
+          "note": "Communication structurée +++xxx/xxxx/xxxxx+++ si présente et valide (objectif : 100 % des paiements)."
+        },
+        {
+          "name": "FreeCom",
+          "type": "note",
+          "note": "Communication libre (paiements manuels historiques) — file d'attente du lettrage manuel."
+        },
+        {
+          "name": "CounterpartyName",
+          "type": "text",
+          "note": "Nom du donneur d'ordre (aide au lettrage manuel)."
+        },
+        {
+          "name": "CounterpartyIBAN",
+          "type": "text",
+          "note": "IBAN du donneur d'ordre (aide au lettrage manuel)."
+        },
+        {
+          "name": "FedasilNumber",
+          "type": "text",
+          "note": "FA résolu après lettrage (vide tant que non imputé)."
+        },
+        {
+          "name": "Month",
+          "type": "number",
+          "note": "Mois imputé après lettrage."
+        },
         {
           "name": "Status",
           "type": "choice",
-          "choices": ["À traiter", "Imputé", "Anomalie"],
-          "indexed": true,
-          "note": "État du lettrage : « À traiter » à l'import ; « Imputé » quand reporté dans Paid (KB-Cumul) ; « Anomalie » si irrésoluble (comm invalide, montant incohérent…). INDEXÉE : c'est LA requête du module 3 (file de lettrage : Status = « À traiter »)."
+          "choices": [
+            "À traiter",
+            "Imputé",
+            "Anomalie"
+          ],
+          "note": "État du lettrage : « À traiter » à l'import ; « Imputé » quand reporté dans Paid (KB-Cumul) ; « Anomalie » si irrésoluble (comm invalide, montant incohérent…)."
         }
       ]
     },
@@ -172,25 +311,115 @@
           "documentOnly": true,
           "note": "Colonne intégrée. Clé d'unicité et d'idempotence de sp:soldes : <FA>-<année>-<mois sur 2 chiffres>, ex. FA00655210-2026-04."
         },
-        { "name": "FedasilNumber", "type": "text", "indexed": true, "note": "FA (clé maîtresse, §5.1). Indexée : la fiche 360° filtre par FA." },
-        { "name": "Year", "type": "number", "indexed": true, "note": "Année des données (explicite — plus d'année implicite comme dans KB-Cumul)." },
-        { "name": "Quarter", "type": "number", "indexed": true, "note": "Trimestre 1-4, dérivé du mois. Indexée : les contrôles (BCSS, tableau de bord) se font par trimestre." },
-        { "name": "Month", "type": "number", "note": "Mois 1-12." },
-        { "name": "YearMonth", "type": "number", "indexed": true, "note": "AAAAMM (ex. 202604) = Year×100 + Month, calculé par sp:soldes. Dimension de découpe FINE : une égalité renvoie au plus un mois d'une année, donc reste sous le seuil des 5000 quel que soit le volume total. Si un trimestre dépasse un jour 5000 déclarations, les contrôles trimestriels se font en 3 requêtes mensuelles assemblées en code." },
-        { "name": "NetSalary", "type": "number" },
-        { "name": "GrossSalary", "type": "number" },
-        { "name": "Contribution", "type": "number" },
-        { "name": "Paid", "type": "number", "note": "CUMUL payé pour le mois (même convention que KB-Cumul, §5.17)." },
-        { "name": "Balance", "type": "number", "note": "Contribution − Paid, arrondi à 2 décimales, recalculé à chaque sync (permet tri et filtre « solde > 0 » sans calcul client)." },
+        {
+          "name": "FedasilNumber",
+          "type": "text",
+          "indexed": true,
+          "note": "FA (clé maîtresse, §5.1). Indexée : la fiche 360° filtre par FA."
+        },
+        {
+          "name": "Year",
+          "type": "number",
+          "indexed": true,
+          "note": "Année des données (explicite — plus d'année implicite comme dans KB-Cumul)."
+        },
+        {
+          "name": "Quarter",
+          "type": "number",
+          "indexed": true,
+          "note": "Trimestre 1-4, dérivé du mois. Indexée : les contrôles (BCSS, tableau de bord) se font par trimestre."
+        },
+        {
+          "name": "Month",
+          "type": "number",
+          "note": "Mois 1-12."
+        },
+        {
+          "name": "YearMonth",
+          "type": "number",
+          "indexed": true,
+          "note": "AAAAMM (ex. 202604) = Year×100 + Month, calculé par sp:soldes. Dimension de découpe FINE : une égalité renvoie au plus un mois d'une année, donc reste sous le seuil des 5000 quel que soit le volume total. Si un trimestre dépasse un jour 5000 déclarations, les contrôles trimestriels se font en 3 requêtes mensuelles assemblées en code."
+        },
+        {
+          "name": "NetSalary",
+          "type": "number"
+        },
+        {
+          "name": "GrossSalary",
+          "type": "number"
+        },
+        {
+          "name": "Contribution",
+          "type": "number"
+        },
+        {
+          "name": "Paid",
+          "type": "number",
+          "note": "CUMUL payé pour le mois (même convention que KB-Cumul, §5.17)."
+        },
+        {
+          "name": "Balance",
+          "type": "number",
+          "note": "Contribution − Paid, arrondi à 2 décimales, recalculé à chaque sync (permet tri et filtre « solde > 0 » sans calcul client)."
+        },
         {
           "name": "PayStatus",
           "type": "choice",
-          "choices": ["Paid", "Partial", "Unpaid"],
+          "choices": [
+            "Paid",
+            "Partial",
+            "Unpaid"
+          ],
           "indexed": true,
           "note": "CODES TECHNIQUES NEUTRES (public staff FR/NL : l'interface traduit à l'affichage, la donnée ne porte aucune langue). Dérivé à chaque sync : Balance ≤ 0 → Paid ; sinon Paid > 0 → Partial ; sinon Unpaid. INDEXÉE : c'est la requête du moteur de rappels (PayStatus = Unpaid/Partial) — un filtre d'égalité indexé passe le seuil des 5000 éléments. L'état « échu » n'est PAS stocké (il dépend de la date du jour : à dériver de DueDate à l'affichage, comme §5.18 côté portail)."
         },
-        { "name": "StructuredCom", "type": "text", "note": "Communication structurée d'origine du mois (§5.10) — permet de re-proposer la même communication dans les rappels tant qu'il ne s'agit pas d'un apurement 9T0 (module 4)." },
-        { "name": "DueDate", "type": "dateTime", "note": "Échéance §5.18 : dernier jour du mois SUIVANT le mois déclaré (avril → 31 mai). Calculée par sp:soldes." }
+        {
+          "name": "StructuredCom",
+          "type": "text",
+          "note": "Communication structurée d'origine du mois (§5.10) — permet de re-proposer la même communication dans les rappels tant qu'il ne s'agit pas d'un apurement 9T0 (module 4)."
+        },
+        {
+          "name": "DueDate",
+          "type": "dateTime",
+          "note": "Échéance §5.18 : dernier jour du mois SUIVANT le mois déclaré (avril → 31 mai). Calculée par sp:soldes."
+        }
+      ]
+    },
+    {
+      "displayName": "Config",
+      "description": "CONFIGURATION APPLICATIVE (chantier §10.0, créée le 13/7/2026). Une ligne par clé (colonne Title). Ligne « ActiveQuarter » = trimestre actif de l'application : écrite par « npm run sp:rotate » À LA FIN de la rotation (après archivage et vidage réussis, confirmation BASCULER), lue par /api/me et /api/declare via api/src/shared/quarterConfig.ts (cache mémoire ~5 min, REPLI sur les variables d'environnement SP_CUMUL_* si la liste est illisible). C'est cette écriture qui bascule le portail : plus de variable à modifier, plus de redéploiement, plus de piège « l'ID prime sur le nom » (ID et nom écrits ensemble). Source de vérité PARTAGÉE avec la future app staff. Liste minuscule (une ligne par clé) : lue SANS $filter, aucun enjeu d'index ni de seuil des 5000.",
+      "columns": [
+        {
+          "name": "Title",
+          "type": "text",
+          "documentOnly": true,
+          "note": "Colonne intégrée. CLÉ de la ligne de configuration : « ActiveQuarter » pour le trimestre actif (d'autres clés pourront s'ajouter plus tard)."
+        },
+        {
+          "name": "Quarter",
+          "type": "number",
+          "note": "Trimestre actif 1-4 (ligne ActiveQuarter). Validé 1-4 à la lecture par quarterConfig.ts."
+        },
+        {
+          "name": "Year",
+          "type": "number",
+          "note": "Année du trimestre actif (ex. 2026). ⚠ Année du trimestre ACTIVÉ, pas celle des données archivées par sp:rotate (qui datent de l'année précédente)."
+        },
+        {
+          "name": "CumulListId",
+          "type": "text",
+          "note": "ID de la liste KB-Cumul du trimestre actif — écrit par sp:rotate, lu tel quel par l'API (plus de résolution par nom pour le trimestre courant, plus d'ambiguïté ID/nom)."
+        },
+        {
+          "name": "CumulListName",
+          "type": "text",
+          "note": "Nom d'affichage de la liste KB-Cumul du trimestre actif (lisibilité + repli : si l'ID était vide, l'API résoudrait par ce nom)."
+        },
+        {
+          "name": "RotationNote",
+          "type": "text",
+          "note": "Traçabilité : horodatage et origine de la dernière bascule (écrit par sp:rotate). Nom « RotationNote » et non « Note » pour éviter toute collision avec des noms internes SharePoint."
+        }
       ]
     }
   ]

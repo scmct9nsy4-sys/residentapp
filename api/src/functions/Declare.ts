@@ -4,6 +4,7 @@ import {
   HttpResponseInit,
   InvocationContext,
 } from "@azure/functions";
+import { getActiveQuarter } from "../shared/quarterConfig";
 
 // ============================================================================
 //  POST /api/declare — Le résident CONNECTÉ déclare ses revenus d'un mois
@@ -17,6 +18,15 @@ import {
 //    1) oid du jeton (claim objectidentifier) -> lignes resident (EntraOid)
 //    2) repli e-mail UNIQUEMENT si correspondance unique (+ auto-réparation :
 //       l'oid est écrit sur la ligne au passage)
+//
+//  TRIMESTRE ACTIF (chantier §10.0, 13/7/2026) : le trimestre en cours n'est
+//  PLUS câblé ici. Il est lu via getActiveQuarter() (module partagé
+//  ../shared/quarterConfig) : liste SharePoint « Config » écrite par
+//  « npm run sp:rotate », cache mémoire ~5 min, repli variables d'env.
+//  Conséquence sur l'ORDRE des contrôles : la validation « le mois appartient
+//  au trimestre en cours » a besoin du trimestre, donc du jeton Graph — elle
+//  se fait désormais APRÈS l'authentification Graph (une pré-validation
+//  1..12 sans réseau reste en tête, comportement inchangé pour le client).
 //
 //  Principes de sécurité :
 //   - L'identité vient du jeton Static Web Apps (x-ms-client-principal).
@@ -49,8 +59,9 @@ const SP_RESIDENT_OID_FIELD =
 const SP_FIRSTNAME_FIELD = process.env["SP_FIRSTNAME_FIELD"] ?? "FirstName";
 const SP_LASTNAME_FIELD = process.env["SP_LASTNAME_FIELD"] ?? "LastName";
 
-const SP_CUMUL_LIST_ID = process.env["SP_CUMUL_LIST_ID"];
-const SP_CUMUL_LIST_NAME = process.env["SP_CUMUL_LIST_NAME"] ?? "KB-Cumul T4";
+// NB (13/7/2026, §10.0) : SP_CUMUL_LIST_ID / SP_CUMUL_LIST_NAME ne sont PLUS
+// lues ici : elles servent de REPLI dans ../shared/quarterConfig si la liste
+// « Config » est illisible.
 
 const SP_CUMUL_FA_FIELD = process.env["SP_CUMUL_FA_FIELD"] ?? "FedasilNumber";
 const SP_MONTH_FIELD = process.env["SP_MONTH_FIELD"] ?? "Month";
@@ -158,11 +169,6 @@ function getOid(principal: ClientPrincipal): string | null {
   if (GUID_RE.test(fromUserId)) return fromUserId;
 
   return null;
-}
-
-function quarterFromListName(name: string): number | null {
-  const m = /T\s*([1-4])/i.exec(name);
-  return m ? Number(m[1]) : null;
 }
 
 async function getGraphToken(context: InvocationContext): Promise<string> {
@@ -465,16 +471,14 @@ export async function Declare(
     const faRequested =
       typeof body.fa === "string" ? body.fa.trim() : "";
 
-    // Le mois doit être un des 3 mois du trimestre en cours.
-    const quarter = quarterFromListName(SP_CUMUL_LIST_NAME);
-    const allowedMonths =
-      quarter !== null
-        ? [quarter * 3 - 2, quarter * 3 - 1, quarter * 3]
-        : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-
+    // Pré-validation SANS réseau (mois plausible, montants valides). Le
+    // contrôle « le mois appartient au trimestre EN COURS » vient plus bas :
+    // depuis le §10.0, le trimestre actif est lu dans la liste Config, ce qui
+    // demande le jeton Graph.
     if (
       !Number.isInteger(month) ||
-      !allowedMonths.includes(month) ||
+      month < 1 ||
+      month > 12 ||
       gross === null ||
       net === null
     ) {
@@ -487,6 +491,19 @@ export async function Declare(
 
     const token = await getGraphToken(context);
     const siteId = await getSiteId(token, context);
+
+    // --- Trimestre actif (liste Config, cache ~5 min, repli env — §10.0) ---
+    const activeQuarter = await getActiveQuarter(siteId, token, context);
+    const quarter = activeQuarter.quarter;
+
+    // Le mois doit être un des 3 mois du trimestre en cours.
+    const allowedMonths =
+      quarter !== null
+        ? [quarter * 3 - 2, quarter * 3 - 1, quarter * 3]
+        : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    if (!allowedMonths.includes(month)) {
+      return { status: 400, jsonBody: { message: "Montants ou mois invalides." } };
+    }
 
     // --- Identité -> profil(s) resident (jamais fourni librement par le client) ---
     const resolved = await resolveProfiles(oid, email, siteId, token, context);
@@ -511,12 +528,12 @@ export async function Declare(
     }
     const fedasilNumber = active.fa;
 
-    // --- Liste du trimestre en cours ---
-    let cumulListId: string | null = SP_CUMUL_LIST_ID ?? null;
+    // --- Liste du trimestre en cours (ID écrit dans Config, sinon par nom) ---
+    let cumulListId: string | null = activeQuarter.listId;
     if (!cumulListId) {
       cumulListId = await findListIdByName(
         siteId,
-        SP_CUMUL_LIST_NAME,
+        activeQuarter.listName,
         token,
         context
       );

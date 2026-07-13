@@ -1,20 +1,48 @@
 # PROCÉDURE — Bascule trimestrielle des listes KB-Cumul
 
 **ResidentApp (Fedasil)** · document d'exploitation · à dérouler à chaque
-clôture de trimestre. **Mise à jour du 12/7/2026 : intégration de la liste
-« Soldes »** (mémoire permanente des soldes mensuels — ETAT-PROJET §5.20).
+clôture de trimestre. **Mise à jour du 13/7/2026 (v3) : bascule AUTOMATIQUE
+via la liste « Config »** (chantier §10.0 de l'état projet) — les étapes
+« modifier les variables de la Static Web App » et « redéployer » ont
+DISPARU. *(v2 du 12/7 : intégration de la liste « Soldes ».)*
 
 > **Principe.** L'application repose sur 4 listes SharePoint **permanentes**
 > (KB-Cumul T1..T4) aux **ID fixes**, réutilisées chaque année : à la bascule,
 > la liste du trimestre réutilisé est **archivée puis vidée**, jamais recréée.
 > Le « trimestre courant » de l'application n'est PAS le trimestre calendaire :
-> c'est le **trimestre en cours de déclaration**, et la bascule des variables
-> d'environnement ci-dessous **EST** la clôture métier.
+> c'est le **trimestre en cours de déclaration**.
+>
+> **Depuis le 13/7/2026, la clôture métier = l'écriture de la ligne
+> « ActiveQuarter » dans la liste SharePoint « Config »**, proposée par
+> `npm run sp:rotate` à la fin de la rotation (confirmation en tapant
+> `BASCULER`). `/api/me` et `/api/declare` lisent cette ligne avec un cache
+> mémoire de ~5 minutes : le portail bascule **sans modification de variable
+> d'environnement et sans redéploiement**. Les variables `SP_CUMUL_*` ne
+> servent plus que de **repli** si la liste Config est illisible.
+>
 > Depuis le 12/7/2026, la liste permanente **« Soldes »** conserve la photo
-> mensuelle de tous les trimestres clos : les impayés **survivent** désormais
-> au vidage des listes trimestrielles.
+> mensuelle de tous les trimestres clos : les impayés **survivent** au vidage
+> des listes trimestrielles.
 
 ---
+
+## 0. Initialisation (UNE FOIS, avant la première bascule automatique)
+
+À faire sur chaque site (test PUIS production Fedasil, le moment venu) :
+
+- [ ] `npm run sp:provision` → crée la liste **Config** (6 colonnes) décrite
+      dans `sharepoint-schema.json`.
+- [ ] Écrire la ligne initiale avec le trimestre ACTUELLEMENT actif, par ex.
+      en juillet 2026 (T2 encore déclarable jusqu'au 31/7) :
+      `npm run sp:rotate -- T2 --config-only --annee=2026`
+      → taper `BASCULER`. *(Mode `--config-only` : aucune donnée touchée —
+      seule la ligne Config est écrite.)*
+- [ ] Vérifier dans SharePoint : liste Config → 1 ligne `ActiveQuarter`
+      avec `Quarter`, `Year`, `CumulListId`, `CumulListName` remplis.
+- [ ] Déployer le code qui lit Config (Me.ts / Declare.ts /
+      quarterConfig.ts) — **l'ordre init → déploiement est sans risque** :
+      tant que Config n'existe pas, le code se replie sur les variables
+      d'environnement actuelles (journalisé `⚠ REPLI`).
 
 ## 1. Calendrier
 
@@ -30,8 +58,14 @@ rares sur justificatifs — processus staff). La bascule a lieu le **1er du
 | T3 | juil – sept | 31 octobre | **1er novembre** | ~15 novembre |
 | T4 | oct – déc | 31 janvier N+1 | **1er février N+1** | ~15 février N+1 |
 
-Exemple ci-dessous : **1er novembre** — clôture de T3, ouverture de T4
-(la liste T4 réutilisée contient encore les données de T4 de l'an passé).
+⚠ **L'année écrite dans Config est celle du trimestre ACTIVÉ** (déduite de la
+date du jour par `sp:rotate`, forçable avec `--annee=YYYY`). Ne pas la
+confondre avec l'année passée en 2ᵉ argument de `sp:rotate`, qui est celle
+des données **archivées** (l'année précédente : la liste est réutilisée
+annuellement).
+
+Exemple ci-dessous : **1er novembre 2026** — clôture de T3, ouverture de T4
+(la liste T4 réutilisée contient encore les données de T4 **2025**).
 
 ## 2. Tableau de référence des listes (à compléter UNE FOIS)
 
@@ -44,6 +78,11 @@ Relever les ID avec `npm run sp:inspect` (colonne `id`) et les consigner ici :
 | KB-Cumul T3 | `à compléter` |
 | KB-Cumul T4 | `à compléter` |
 | Soldes | `à compléter` *(tenant de test : `610bf274-1738-4323-af0a-8c108945a1d9`)* |
+| Config | `à compléter` |
+
+> Depuis la bascule automatique, ce tableau sert surtout de **contrôle
+> visuel** : c'est `sp:rotate` qui écrit l'ID de la liste courante dans
+> Config, sans ressaisie manuelle.
 
 ## 3. Checklist de bascule (exemple : 1er novembre, T3 → T4)
 
@@ -63,13 +102,18 @@ mettre `Paid` à jour depuis la dernière synchronisation :
 > pour prévisualiser). Il ne touche jamais aux colonnes qu'il ne possède pas
 > (colonnes du moteur de rappels).
 
-### B. Archiver + vider la liste réutilisée (T4, données de l'an dernier)
+### B. Archiver + vider la liste réutilisée, puis BASCULER
 
 - [ ] Depuis la racine du dépôt (avec `api/local.settings.json` configuré) :
       `npm run sp:rotate -- T4 2025`
       *(« 2025 » = année des données archivées, utilisée dans le nom des fichiers)*
 - [ ] Le script écrit `archives/KB-Cumul-T4-2025_<horodatage>.json` + `.csv`
       **avant** toute suppression, puis demande de taper `VIDER`.
+- [ ] Après le vidage, le script propose la **bascule du trimestre actif** :
+      « Activer “KB-Cumul T4” comme trimestre courant (T4 2026) ? » →
+      vérifier le trimestre ET l'année affichés, puis taper `BASCULER`.
+      **C'est cette confirmation qui ferme les déclarations T3 et ouvre T4**
+      (effective sur le portail en ≤ 5 minutes, cache mémoire des Functions).
 - [ ] Ranger les deux fichiers d'archive dans l'emplacement prévu
       (`à confirmer : pratique d'archivage actuelle — SharePoint staff ?
       coffre ? autre ?`) puis les supprimer du poste local.
@@ -77,7 +121,9 @@ mettre `Paid` à jour depuis la dernière synchronisation :
       (données personnelles — ne JAMAIS commiter).
 
 > Alternative sans suppression : `npm run sp:rotate -- T4 2025 --export-only`
-> pour n'exporter que l'archive (vidage manuel ensuite).
+> pour n'exporter que l'archive (aucun vidage, **aucune bascule**).
+> Bascule seule (récupération, ou vidage fait autrement) :
+> `npm run sp:rotate -- T4 --config-only [--annee=2026]`.
 > L'archive JSON/CSV reste la sauvegarde « brute » ; la mémoire APPLICATIVE
 > est la liste Soldes (étape A).
 
@@ -101,35 +147,18 @@ mettre `Paid` à jour depuis la dernière synchronisation :
       porte `"indexed": true` sur `FedasilNumber` → `sp:provision` crée la
       colonne déjà indexée. Rien à faire non plus.
 
-### C. Basculer les variables de la Static Web App (portail Azure)
+### C. Vérifications sur le portail (compte de test)
 
-> ⚠ **PIÈGE VÉRIFIÉ (13/7/2026)** : dans `Me.ts`, **`SP_CUMUL_LIST_ID` est
-> PRIORITAIRE sur `SP_CUMUL_LIST_NAME`**. Si l'ID pointe encore sur l'ancienne
-> liste, changer le seul nom **n'a aucun effet** — et le portail continue de
-> servir l'ancien trimestre **sans le moindre message d'erreur**. Modifier les
-> DEUX, toujours.
->
-> 🔜 Cette étape est appelée à DISPARAÎTRE : le chantier §10.0 de l'état projet
-> (liste `Config` écrite par `sp:rotate`) rendra la bascule automatique.
+> ⏱ Attendre jusqu'à **5 minutes** après le `BASCULER` (durée du cache
+> mémoire des Functions). Aucun redéploiement n'est nécessaire.
 
-Portail Azure → Static Web App `residentapp` → Configuration :
+- [ ] Trimestre courant = T4, **vide**, les 3 mois (oct/nov/déc) en « + » ;
+- [ ] « Voir le trimestre précédent » = T3 complet (lecture seule de fait) ;
+- [ ] Déclarer un mois de test sur T4 → OK, puis corriger → OK ;
+- [ ] (Optionnel) supprimer la ligne de test dans SharePoint **et** la ligne
+      correspondante dans Soldes si une synchronisation a eu lieu entre-temps.
 
-- [ ] `SP_CUMUL_LIST_NAME` → `KB-Cumul T4`
-- [ ] `SP_CUMUL_LIST_ID` → ID de T4 (tableau §2) — **⚠ ne pas l'oublier : il
-      prime sur le nom**
-- [ ] `SP_CUMUL_PREV_LIST_NAME` → `KB-Cumul T3`
-- [ ] Enregistrer.
-
-> Rappel : c'est cette bascule qui ferme les déclarations T3 et ouvre T4
-> (`Declare.ts` déduit les mois autorisés du nom de la liste courante).
-
-### D. Redéployer (variables d'env ⇒ redéploiement obligatoire)
-
-- [ ] GitHub → Actions → **le workflow le PLUS RÉCENT uniquement** →
-      « Re-run all jobs ». *(Ne jamais re-run un ancien workflow : il
-      redéploierait du code périmé.)*
-
-### E. Photographier dans Soldes le trimestre QUI VIENT DE SE CLÔTURER
+### D. Photographier dans Soldes le trimestre QUI VIENT DE SE CLÔTURER
 
 Les déclarations de T3 sont désormais figées (la bascule a fermé la saisie) :
 
@@ -146,21 +175,29 @@ Les déclarations de T3 sont désormais figées (la bascule a fermé la saisie) 
 > jour de `Paid` (lettrage, saisie manuelle) — candidat à l'automatisation
 > Power Automate. Règle de vérité : ETAT-PROJET §5.20.
 
-### F. Vérifications sur le portail (compte de test)
+### E. (Optionnel, sans urgence) Aligner les variables de REPLI
 
-- [ ] Trimestre courant = T4, **vide**, les 3 mois (oct/nov/déc) en « + » ;
-- [ ] « Voir le trimestre précédent » = T3 complet (lecture seule de fait) ;
-- [ ] Déclarer un mois de test sur T4 → OK, puis corriger → OK ;
-- [ ] (Optionnel) supprimer la ligne de test dans SharePoint **et** la ligne
-      correspondante dans Soldes si une synchronisation a eu lieu entre-temps.
+Les variables `SP_CUMUL_LIST_NAME` / `SP_CUMUL_LIST_ID` /
+`SP_CUMUL_PREV_LIST_NAME` **ne pilotent plus le portail** : elles ne servent
+que si la liste Config devenait illisible (repli, journalisé `⚠ REPLI` dans
+les logs des Functions). Un repli sur des valeurs périmées servirait un
+ANCIEN trimestre : autant les garder à jour, **quand c'est commode** —
+p. ex. groupées avec le prochain déploiement de code (rappel : modifier les
+variables d'une SWA exige un redéploiement pour être pris en compte).
 
-### G. Mettre à jour l'environnement local (dev)
-
-- [ ] Reporter les 3 mêmes variables dans `api/local.settings.json`.
+- [ ] Portail Azure → Static Web App `residentapp` → Configuration :
+      `SP_CUMUL_LIST_NAME`, `SP_CUMUL_LIST_ID`, `SP_CUMUL_PREV_LIST_NAME`.
+- [ ] Reporter les mêmes valeurs dans `api/local.settings.json` (dev).
       ⚠ JSON STRICT : valider avec
       `node -e "JSON.parse(require('fs').readFileSync('api/local.settings.json','utf8'))"`.
+- [ ] Au prochain déploiement de code : GitHub → Actions → **le workflow le
+      PLUS RÉCENT uniquement** → « Re-run all jobs ».
 
-### H. Vers le 15 : phase de contrôle (processus staff)
+> NB dev local : les Functions locales lisent la MÊME liste Config (mêmes
+> identifiants Graph) — le poste de dev bascule donc automatiquement, lui
+> aussi.
+
+### F. Vers le 15 : phase de contrôle (processus staff)
 
 - [ ] Chiffres BCSS reçus → contrôle brut trimestre vs net déclaré (contrôle
       par exception, seuil d'écart) — les nets déclarés du trimestre clos se
@@ -171,15 +208,26 @@ Les déclarations de T3 sont désormais figées (la bascule a fermé la saisie) 
 
 ## 4. Points de vigilance
 
-- **Les impayés survivent désormais au vidage** — via la liste Soldes,
-  À CONDITION que les étapes A et E aient été exécutées. La règle de vérité
-  (ETAT-PROJET §5.20) : tant que la ligne KB-Cumul existe, elle est la source
-  et `sp:soldes` resynchronise ; après vidage, **Soldes est la seule vérité**.
+- **`BASCULER` ferme immédiatement l'ancien trimestre** (≤ 5 min sur le
+  portail) : ne confirmer qu'à la date de bascule du calendrier §1, jamais
+  « en avance pour préparer ».
+- **Toujours VÉRIFIER le trimestre ET l'année affichés** dans l'invite
+  `BASCULER` avant de confirmer (l'année est déduite de la date du jour ;
+  `--annee=YYYY` pour forcer un cas particulier).
+- **Les impayés survivent au vidage** — via la liste Soldes, À CONDITION que
+  les étapes A et D aient été exécutées. La règle de vérité (ETAT-PROJET
+  §5.20) : tant que la ligne KB-Cumul existe, elle est la source et
+  `sp:soldes` resynchronise ; après vidage, **Soldes est la seule vérité**.
 - **`sp:soldes` AVANT `sp:rotate`** : l'ordre A → B n'est pas négociable —
   une fois la liste vidée, il n'y a plus rien à synchroniser (seule l'archive
   JSON permettrait une reprise manuelle).
 - **Ne jamais renommer ni supprimer les listes** : leurs ID sont câblés
-  dans la configuration (tableau §2) — c'est l'avantage du modèle.
+  (liste Config + tableau §2) — c'est l'avantage du modèle.
+- **Ne jamais éditer la ligne ActiveQuarter à la main dans SharePoint**, sauf
+  urgence : passer par `sp:rotate --config-only` (qui écrit ID + nom + note
+  de traçabilité de façon cohérente). En cas d'édition manuelle : `Quarter`
+  1-4 et `Year` sont validés à la lecture ; une ligne invalide déclenche le
+  repli variables d'environnement (journalisé).
 - **L'archive JSON fait foi** (types fidèles) ; le CSV (séparateur `;`,
   encodage Excel) est un confort de consultation.
 - Une **communication structurée** encode le mois mais pas l'année : un
@@ -189,10 +237,23 @@ Les déclarations de T3 sont désormais figées (la bascule a fermé la saisie) 
 
 ## 5. En cas de problème
 
-- Portail vide / erreurs après bascule → vérifier les 3 variables (faute de
-  frappe dans le nom ou l'ID), puis re-run du dernier workflow.
+- **Le portail affiche toujours l'ancien trimestre > 5 min après BASCULER** →
+  ouvrir la liste Config dans SharePoint et vérifier la ligne `ActiveQuarter`
+  (Quarter/Year/CumulListId) ; consulter les logs Application Insights des
+  Functions : la ligne `Trimestre actif : T… (source : Config)` doit
+  apparaître — si `⚠ REPLI` apparaît, la ligne Config est absente ou
+  invalide → `npm run sp:rotate -- T4 --config-only --annee=2026`.
+- **« Liste Config INTROUVABLE » affiché par sp:rotate** → la rotation
+  (archive + vidage) est FAITE, seule la bascule manque :
+  `npm run sp:provision` puis
+  `npm run sp:rotate -- T4 --config-only --annee=2026`.
+- **Bascule confirmée par erreur / mauvais trimestre** → rejouer simplement
+  `npm run sp:rotate -- T<bon> --config-only --annee=<bonne>` (upsert : la
+  ligne est réécrite, effective en ≤ 5 min).
+- Portail vide / erreurs après bascule → vérifier la ligne Config (faute
+  dans l'ID si édition manuelle), puis les logs (`⚠ REPLI`, erreurs 400/403).
 - `sp:rotate` ou `sp:soldes` échoue au jeton → secret Graph dans
-  `api/local.settings.json` (et JSON strict : voir étape G).
+  `api/local.settings.json` (et JSON strict : voir étape E).
 - `sp:soldes` → erreur Graph 400 « Field '…' is not recognized » → le schéma
   a évolué mais la liste n'a pas suivi : lancer `npm run sp:provision`
   d'abord, puis relancer `sp:soldes` (reprise automatique, upsert).

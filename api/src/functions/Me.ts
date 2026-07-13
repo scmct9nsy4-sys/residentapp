@@ -4,6 +4,7 @@ import {
   HttpResponseInit,
   InvocationContext,
 } from "@azure/functions";
+import { getActiveQuarter } from "../shared/quarterConfig";
 
 // ============================================================================
 //  /api/me  —  Déclarations mensuelles du résident CONNECTÉ uniquement
@@ -24,6 +25,15 @@ import {
 //    - GET /api/me?fa=FA00655210 : le serveur VÉRIFIE que ce FA appartient
 //      aux lignes liées à l'identité authentifiée (sinon 403). Le navigateur
 //      ne choisit que parmi SES profils, jamais librement.
+//
+//  TRIMESTRE ACTIF (chantier §10.0, 13/7/2026) : le trimestre courant n'est
+//  PLUS câblé ici. Il est lu via getActiveQuarter() (module partagé
+//  ../shared/quarterConfig) : liste SharePoint « Config » écrite par
+//  « npm run sp:rotate » à la fin de chaque rotation, cache mémoire ~5 min,
+//  repli sur les variables d'environnement historiques si Config est
+//  illisible. La bascule trimestrielle ne demande plus NI modification de
+//  variable NI redéploiement — et le piège « SP_CUMUL_LIST_ID prime sur le
+//  nom » disparaît (ID et nom écrits ensemble par le même script).
 //
 //  Paramètres optionnels :
 //    ?quarter=previous  -> liste du trimestre précédent (inchangé)
@@ -65,12 +75,10 @@ const SP_RESIDENT_OID_FIELD =
 const SP_FIRSTNAME_FIELD = process.env["SP_FIRSTNAME_FIELD"] ?? "FirstName";
 const SP_LASTNAME_FIELD = process.env["SP_LASTNAME_FIELD"] ?? "LastName";
 
-// Étape 2 : listes KB-Cumul (une liste PAR trimestre)
-const SP_CUMUL_LIST_ID = process.env["SP_CUMUL_LIST_ID"];
-const SP_CUMUL_LIST_NAME = process.env["SP_CUMUL_LIST_NAME"] ?? "KB-Cumul T4";
-// Trimestre précédent : par nom uniquement (la liste change chaque trimestre)
-const SP_CUMUL_PREV_LIST_NAME =
-  process.env["SP_CUMUL_PREV_LIST_NAME"] ?? "KB-Cumul T3";
+// Étape 2 : listes KB-Cumul (une liste PAR trimestre).
+// NB (13/7/2026, §10.0) : SP_CUMUL_LIST_NAME / SP_CUMUL_LIST_ID /
+// SP_CUMUL_PREV_LIST_NAME ne sont PLUS lues ici : elles servent de REPLI
+// dans ../shared/quarterConfig si la liste « Config » est illisible.
 
 // Noms INTERNES des colonnes dans les listes KB-Cumul
 const SP_CUMUL_FA_FIELD = process.env["SP_CUMUL_FA_FIELD"] ?? "FedasilNumber";
@@ -184,12 +192,6 @@ function toNumberOrNull(v: unknown): number | null {
   if (v === undefined || v === null || v === "") return null;
   const n = typeof v === "number" ? v : Number(String(v).replace(",", "."));
   return Number.isFinite(n) ? n : null;
-}
-
-// Extrait le n° de trimestre du nom de liste ("KB-Cumul T4" -> 4).
-function quarterFromListName(name: string): number | null {
-  const m = /T\s*([1-4])/i.exec(name);
-  return m ? Number(m[1]) : null;
 }
 
 // ---------- Token Graph ----------
@@ -523,13 +525,23 @@ export async function Me(
     }
     const fedasilNumber = active.fa;
 
-    // --- Étape 2 : FedasilNumber -> déclarations du trimestre demandé ---
-    const listName = wantPrevious ? SP_CUMUL_PREV_LIST_NAME : SP_CUMUL_LIST_NAME;
-    const quarter = quarterFromListName(listName);
+    // --- Étape 2 : trimestre actif -> déclarations du trimestre demandé ---
+    // §10.0 (13/7/2026) : le trimestre actif est lu dans la liste « Config »
+    // (écrite par sp:rotate, cache mémoire ~5 min, repli variables d'env).
+    const activeQuarter = await getActiveQuarter(siteId, token, context);
+    const listName = wantPrevious
+      ? activeQuarter.prevListName
+      : activeQuarter.listName;
+    const quarter = wantPrevious
+      ? activeQuarter.prevQuarter
+      : activeQuarter.quarter;
 
-    // Trimestre en cours : l'ID explicite (SP_CUMUL_LIST_ID) a priorité.
-    let cumulListId: string | null =
-      !wantPrevious && SP_CUMUL_LIST_ID ? SP_CUMUL_LIST_ID : null;
+    // Trimestre en cours : l'ID écrit dans Config (ou, en repli, la variable
+    // SP_CUMUL_LIST_ID) évite une résolution par nom. Le trimestre précédent
+    // est TOUJOURS résolu par nom (aucun ID stocké pour lui — inchangé).
+    let cumulListId: string | null = !wantPrevious
+      ? activeQuarter.listId
+      : null;
     if (!cumulListId) {
       cumulListId = await findListIdByName(siteId, listName, token, context);
     }
