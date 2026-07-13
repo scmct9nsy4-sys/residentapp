@@ -5,41 +5,13 @@
 // L'API renvoie toutes les déclarations du trimestre, triées de la plus
 // récente à la plus ancienne : { quarter, months: [...] }.
 // Présentation :
-//   0. La pastille « Votre accès est activé » n'apparaît qu'à la PREMIÈRE
-//      visite réussie du compte sur cet appareil (clé localStorage par oid) ;
-//      ensuite l'espace en haut de page est rendu au contenu utile
 //   1. Tuiles du mois AFFICHÉ (par défaut le plus récent ; cliquer un mois
-//      dans la carte trimestre change le mois affiché) ; la tuile « Payé »
-//      porte un bouton violet « Payer X € » quand un solde reste dû pour ce
-//      mois -> défilement direct vers le QR et les infos de virement ;
-//      la tuile « Reste à payer » du récapitulatif fait de même (FIFO)
-//   2. Carte « Trimestre en cours » : lignes de mois CLIQUABLES, chacune
-//      avec une icône d'état de paiement (forme + couleur : cercle violet =
-//      à payer, demi-cercle ambre = acompte, coche verte = payé, point
-//      d'exclamation rouge = échéance dépassée), total du trimestre
+//      dans la carte trimestre change le mois affiché)
+//   2. Carte « Trimestre en cours » : lignes de mois CLIQUABLES (coche =
+//      déclaré), total du trimestre
 //   3. « Paiements du trimestre » : à payer / déjà payé / reste à payer
 //      (l'information principale pour le résident)
 //   4. Bouton vers le trimestre précédent (/api/me?quarter=previous)
-//
-// MOBILE (la majorité des résidents consultent depuis leur téléphone) :
-//   - Un code QR ne peut pas être scanné sur l'écran qui l'affiche : sur
-//     appareil tactile (hover:none + pointer:coarse), la carte de paiement
-//     met les champs COPIABLES en premier et le QR devient optionnel
-//     (bouton « Afficher le code QR », utile pour scanner avec un AUTRE
-//     appareil). Sur ordinateur : QR d'abord, comme avant.
-//   - Le bouton « Se déconnecter » est aussi dans l'EN-TÊTE (toujours
-//     visible, important sur les postes partagés) ; celui du pied de carte
-//     est conservé (chemin naturel après lecture).
-//
-// LITTÉRATIE ET CONFIANCE (public multilingue, à l'aise ou non avec l'écrit) :
-//   - Aide dépliable « Où trouver ces montants sur ma fiche de paie ? » dans
-//     le formulaire de déclaration (brut = haut de la fiche, net = bas).
-//   - Pictogrammes discrets sur les titres de section (repères visuels).
-//   - Confirmation verte après une déclaration/correction réussie, avec
-//     sélection automatique du mois concerné (enchaîne vers le paiement).
-//   - Erreurs récupérables : bouton « Réessayer » (réseaux mobiles
-//     instables) ; session expirée (401) -> retour à la connexion au lieu
-//     d'un message d'erreur incompréhensible.
 //
 // FAMILLES (plusieurs personnes partagent une adresse e-mail = même compte
 // Microsoft = même oid, mais des FA différents) :
@@ -52,8 +24,7 @@
 //     personne » reste visible tant qu'il y a plusieurs profils.
 // =============================================================================
 
-import { useState, useEffect, useRef } from "react";
-import type { ReactNode } from "react";
+import { useState, useEffect } from "react";
 import QRCode from "qrcode";
 
 import { useLanguage } from "./i18n/useLanguage";
@@ -89,32 +60,6 @@ const labels = {
     payFor: "Paiement pour",
     scanQr: "Scannez ce code avec votre application bancaire :",
     orManual: "Ou faites un virement avec ces informations :",
-    manualOnly: "Faites un virement avec ces informations :",
-    showQrBtn: "Afficher le code QR",
-    hideQrBtn: "Masquer le code QR",
-    qrOtherDevice:
-      "Ce code se scanne avec l'application bancaire d'un autre appareil.",
-    payAmountBtn: "Payer {amount}",
-    retry: "Réessayer",
-    declaredOk:
-      "Votre déclaration de {month} est enregistrée. Contribution : {amount}.",
-    whereAmounts: "Où trouver ces montants sur ma fiche de paie ?",
-    whereGross:
-      "Le salaire brut est le montant avant les retenues (cotisations, impôts). Il se trouve en général en haut de votre fiche de paie.",
-    whereNet:
-      "Le salaire net est le montant que vous recevez sur votre compte en banque. Il se trouve en général en bas de votre fiche de paie.",
-    payOtherAmount: "Payer un autre montant",
-    payFullAmount: "Revenir au solde complet",
-    customAmountLabel: "Montant à payer (€)",
-    customAmountHelp:
-      "Entre 0,01 et {max}. Le reste pourra être payé plus tard avec la même communication.",
-    customAmountInvalid:
-      "Montant non valide. Indiquez un montant entre 0,01 et {max}.",
-    remainderAfter: "Après ce paiement, il restera {amount} pour ce mois.",
-    stateUnpaid: "À payer",
-    statePartial: "Acompte versé",
-    statePaid: "Payé",
-    stateOverdue: "Échéance dépassée",
     beneficiaryLabel: "Bénéficiaire",
     ibanLabel: "Compte (IBAN)",
     amountLabel: "Montant",
@@ -165,6 +110,7 @@ const labels = {
     profileOpenAria: "Ouvrir le profil de",
     profileViewing: "Vous consultez le dossier de",
     profileChange: "Changer de personne",
+    retryBtn: "Réessayer",
   },
   nl: {
     welcome: "Welkom",
@@ -194,31 +140,6 @@ const labels = {
     payFor: "Betaling voor",
     scanQr: "Scan deze code met uw bankapp:",
     orManual: "Of doe een overschrijving met deze gegevens:",
-    manualOnly: "Doe een overschrijving met deze gegevens:",
-    showQrBtn: "QR-code tonen",
-    hideQrBtn: "QR-code verbergen",
-    qrOtherDevice: "Deze code scant u met de bankapp van een ander toestel.",
-    payAmountBtn: "{amount} betalen",
-    retry: "Opnieuw proberen",
-    declaredOk:
-      "Uw aangifte voor {month} is geregistreerd. Bijdrage: {amount}.",
-    whereAmounts: "Waar vind ik deze bedragen op mijn loonfiche?",
-    whereGross:
-      "Het brutoloon is het bedrag vóór de inhoudingen (bijdragen, belastingen). Het staat meestal bovenaan uw loonfiche.",
-    whereNet:
-      "Het nettoloon is het bedrag dat u op uw bankrekening ontvangt. Het staat meestal onderaan uw loonfiche.",
-    payOtherAmount: "Een ander bedrag betalen",
-    payFullAmount: "Terug naar het volledige saldo",
-    customAmountLabel: "Te betalen bedrag (€)",
-    customAmountHelp:
-      "Tussen 0,01 en {max}. De rest kunt u later betalen met dezelfde mededeling.",
-    customAmountInvalid:
-      "Ongeldig bedrag. Geef een bedrag op tussen 0,01 en {max}.",
-    remainderAfter: "Na deze betaling blijft er {amount} over voor deze maand.",
-    stateUnpaid: "Te betalen",
-    statePartial: "Voorschot betaald",
-    statePaid: "Betaald",
-    stateOverdue: "Vervaldag verstreken",
     beneficiaryLabel: "Begunstigde",
     ibanLabel: "Rekening (IBAN)",
     amountLabel: "Bedrag",
@@ -268,6 +189,7 @@ const labels = {
     profileOpenAria: "Profiel openen van",
     profileViewing: "U bekijkt het dossier van",
     profileChange: "Van persoon wisselen",
+    retryBtn: "Opnieuw proberen",
   },
   en: {
     welcome: "Welcome",
@@ -297,31 +219,6 @@ const labels = {
     payFor: "Payment for",
     scanQr: "Scan this code with your banking app:",
     orManual: "Or make a transfer with these details:",
-    manualOnly: "Make a transfer with these details:",
-    showQrBtn: "Show QR code",
-    hideQrBtn: "Hide QR code",
-    qrOtherDevice: "Scan this code with the banking app on another device.",
-    payAmountBtn: "Pay {amount}",
-    retry: "Try again",
-    declaredOk:
-      "Your declaration for {month} has been saved. Contribution: {amount}.",
-    whereAmounts: "Where can I find these amounts on my payslip?",
-    whereGross:
-      "The gross salary is the amount before deductions (contributions, taxes). It is usually at the top of your payslip.",
-    whereNet:
-      "The net salary is the amount you actually receive in your bank account. It is usually at the bottom of your payslip.",
-    payOtherAmount: "Pay a different amount",
-    payFullAmount: "Back to the full balance",
-    customAmountLabel: "Amount to pay (€)",
-    customAmountHelp:
-      "Between 0.01 and {max}. The rest can be paid later with the same communication.",
-    customAmountInvalid:
-      "Invalid amount. Enter an amount between 0.01 and {max}.",
-    remainderAfter: "After this payment, {amount} will remain for this month.",
-    stateUnpaid: "To pay",
-    statePartial: "Deposit paid",
-    statePaid: "Paid",
-    stateOverdue: "Deadline passed",
     beneficiaryLabel: "Beneficiary",
     ibanLabel: "Account (IBAN)",
     amountLabel: "Amount",
@@ -371,12 +268,9 @@ const labels = {
     profileOpenAria: "Open the profile of",
     profileViewing: "You are viewing the file of",
     profileChange: "Switch person",
+    retryBtn: "Try again",
   },
 } as const;
-
-// URL de déconnexion du portail (renvoie vers "/" avec l'avis « ordinateur
-// partagé » ; voir App.tsx). Utilisée dans l'en-tête ET en pied de carte.
-const LOGOUT_URL = "/.auth/logout?post_logout_redirect_uri=%2F%3Floggedout%3D1";
 
 // --- Types (alignés sur la réponse de /api/me) ----------------------------------
 
@@ -469,60 +363,6 @@ function parseAmount(raw: string): number | null {
     : null;
 }
 
-// --- Statut de paiement d'un mois (codes couleurs) --------------------------
-
-/** Les 4 états de paiement : rien versé / acompte / payé / échéance dépassée. */
-type PayStatus = "unpaid" | "partial" | "paid" | "overdue";
-
-/** Date limite de paiement d'un mois déclaré.
- *  RÈGLE MÉTIER (confirmée le 10/7/2026) : la contribution d'un mois est
- *  due pour la FIN DU MOIS SUIVANT la clôture du mois (ex. avril -> 31 mai).
- *  Échéance dépassée = mise en évidence UNIQUEMENT (couleur + libellé) ;
- *  aucune action ni blocage : le paiement reste possible à l'identique.
- *  L'année est déduite du trimestre applicatif (décalé, §5.16 de l'état
- *  projet) : si le trimestre affiché est postérieur au trimestre calendaire
- *  d'aujourd'hui, il appartient à l'année précédente (ex. T4 en janvier). */
-function paymentDeadline(month: number, quarter: number): Date {
-  const now = new Date();
-  const calendarQuarter = Math.floor(now.getMonth() / 3) + 1;
-  const year =
-    quarter > calendarQuarter ? now.getFullYear() - 1 : now.getFullYear();
-  // Dernier jour du mois suivant (le débordement de mois est géré par JS).
-  return new Date(year, month + 1, 0, 23, 59, 59);
-}
-
-/** Statut de paiement d'un mois déclaré.
- *  L'échéance dépassée PRIME sur l'acompte (couleur distinctive). */
-function monthPayStatus(
-  m: MonthlyDeclaration,
-  quarter: number | null
-): PayStatus {
-  const due = (m.contribution ?? 0) - (m.paid ?? 0);
-  if (due <= 0.005) return "paid";
-  if (quarter !== null && new Date() > paymentDeadline(m.month, quarter)) {
-    return "overdue";
-  }
-  return (m.paid ?? 0) > 0.005 ? "partial" : "unpaid";
-}
-
-/** Tonalité de tuile correspondant à un statut de paiement. */
-function toneForStatus(
-  s: PayStatus
-): "highlight" | "ok" | "partial" | "overdue" {
-  if (s === "paid") return "ok";
-  if (s === "partial") return "partial";
-  if (s === "overdue") return "overdue";
-  return "highlight";
-}
-
-/** Libellé texte d'un statut de paiement (jamais la couleur seule). */
-function stateLabelFor(t: (typeof labels)[Language], s: PayStatus): string {
-  if (s === "paid") return t.statePaid;
-  if (s === "partial") return t.statePartial;
-  if (s === "overdue") return t.stateOverdue;
-  return t.stateUnpaid;
-}
-
 /** Contenu d'un QR EPC (« SEPA Credit Transfer », norme EPC069-12).
  *  Reconnu par les applications bancaires belges (ING, KBC, Belfius…).
  *  La communication structurée belge (+++...+++) se place dans le champ
@@ -547,30 +387,6 @@ function epcQrPayload(
     "", // référence structurée ISO 11649 (non utilisée en Belgique)
     remittance, // communication belge +++.../.../..+++
   ].join("\n");
-}
-
-// --- Détection tactile (ergonomie mobile) ---------------------------------------
-
-/** true sur les appareils tactiles SANS souris (téléphones, tablettes).
- *  Utilisé pour adapter la carte de paiement : un QR affiché sur l'écran
- *  du téléphone ne peut pas être scanné par ce même téléphone.
- *  Réactif : suit les changements (ex. tablette avec souris branchée). */
-function useCoarsePointer(): boolean {
-  const QUERY = "(hover: none) and (pointer: coarse)";
-  const [coarse, setCoarse] = useState<boolean>(
-    () =>
-      typeof window !== "undefined" && window.matchMedia(QUERY).matches
-  );
-
-  useEffect(() => {
-    const mq = window.matchMedia(QUERY);
-    const onChange = (e: MediaQueryListEvent) => setCoarse(e.matches);
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-    // QUERY est une constante : pas de dépendance nécessaire.
-  }, []);
-
-  return coarse;
 }
 
 // --- Petits composants de présentation ----------------------------------------
@@ -624,230 +440,21 @@ function CheckIcon({ size = 22 }: { size?: number }) {
   );
 }
 
-/** Icône d'état de paiement d'un mois : la FORME distingue les états en
- *  plus de la couleur (daltonisme, écrans de faible qualité) :
- *  cercle vide = à payer · demi-cercle plein = acompte versé ·
- *  coche = payé · point d'exclamation = échéance dépassée. */
-function PayStatusIcon({
-  status,
-  size = 18,
-}: {
-  status: PayStatus;
-  size?: number;
-}) {
-  if (status === "paid") return <CheckIcon size={size} />;
-
-  if (status === "partial") {
-    return (
-      <svg
-        width={size}
-        height={size}
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        aria-hidden="true"
-      >
-        <circle cx="12" cy="12" r="10" />
-        <path d="M12 2a10 10 0 0 1 0 20Z" fill="currentColor" stroke="none" />
-      </svg>
-    );
-  }
-
-  if (status === "overdue") {
-    return (
-      <svg
-        width={size}
-        height={size}
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        aria-hidden="true"
-      >
-        <circle cx="12" cy="12" r="10" />
-        <line x1="12" y1="7" x2="12" y2="13" />
-        <circle cx="12" cy="16.5" r="1.2" fill="currentColor" stroke="none" />
-      </svg>
-    );
-  }
-
-  // "unpaid" : cercle vide (état normal, rien d'alarmant)
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      aria-hidden="true"
-    >
-      <circle cx="12" cy="12" r="10" />
-    </svg>
-  );
-}
-
-/** Icônes de section : repères visuels pour les lecteurs peu à l'aise avec
- *  le texte (public multilingue). Toujours aria-hidden : le titre TEXTE
- *  porte l'information, l'icône n'est qu'un renfort. */
-function CalendarIcon({ size = 18 }: { size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <rect x="3" y="4" width="18" height="18" rx="2" />
-      <line x1="16" y1="2" x2="16" y2="6" />
-      <line x1="8" y1="2" x2="8" y2="6" />
-      <line x1="3" y1="10" x2="21" y2="10" />
-    </svg>
-  );
-}
-
-function EuroIcon({ size = 18 }: { size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M4 10h12" />
-      <path d="M4 14h9" />
-      <path d="M19 6a7.7 7.7 0 0 0-5.2-2A7.9 7.9 0 0 0 6 12c0 4.4 3.5 8 7.8 8 2 0 3.8-.8 5.2-2" />
-    </svg>
-  );
-}
-
-function PenIcon({ size = 18 }: { size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-    </svg>
-  );
-}
-
-function FileTextIcon({ size = 18 }: { size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-      <polyline points="14 2 14 8 20 8" />
-      <line x1="16" y1="13" x2="8" y2="13" />
-      <line x1="16" y1="17" x2="8" y2="17" />
-    </svg>
-  );
-}
-
-/** Titre de section avec pictogramme optionnel (violet, décoratif). */
-function SectionTitle({
-  icon,
-  children,
-}: {
-  icon?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <h2 className="portal-section-title">
-      {icon && (
-        <span className="title-icon" aria-hidden="true">
-          {icon}
-        </span>
-      )}
-      <span>{children}</span>
-    </h2>
-  );
-}
-
-/** Tuile de donnée : libellé + valeur + sous-libellé d'état optionnel.
- *  tone : "highlight" = violet, "ok" = vert, "partial" = ambre (acompte),
- *  "overdue" = rouge (échéance dépassée) — le sous-libellé TEXTE accompagne
- *  toujours la couleur (jamais la couleur seule).
- *  onClick : rend la tuile ENTIÈRE cliquable (bouton), ex. « Reste à payer »
- *  -> défilement vers la carte de paiement.
- *  action : bouton violet plein INTÉGRÉ à la tuile (ex. « Payer 245,00 € »
- *  sur la tuile « Payé »). Ignoré si onClick est fourni (pas de bouton
- *  imbriqué dans un bouton). */
+/** Tuile de donnée : libellé + valeur.
+ *  tone : "highlight" = valeur en violet, "ok" = valeur en vert. */
 function DataTile({
   label,
   value,
   tone,
-  sub,
-  onClick,
-  action,
 }: {
   label: string;
   value: string;
-  tone?: "highlight" | "ok" | "partial" | "overdue";
-  sub?: string;
-  onClick?: () => void;
-  action?: { label: string; onClick: () => void };
+  tone?: "highlight" | "ok";
 }) {
-  const className = `data-tile${tone ? ` ${tone}` : ""}`;
-  const inner = (
-    <>
+  return (
+    <div className={`data-tile${tone ? ` ${tone}` : ""}`}>
       <span className="label">{label}</span>
       <span className="value">{value || "—"}</span>
-      {sub && <span className="sub">{sub}</span>}
-    </>
-  );
-
-  if (onClick) {
-    return (
-      <button type="button" className={className} onClick={onClick}>
-        {inner}
-        <span className="tile-arrow" aria-hidden="true">
-          ›
-        </span>
-      </button>
-    );
-  }
-
-  return (
-    <div className={className}>
-      {inner}
-      {action && (
-        <button
-          type="button"
-          className="btn btn-primary btn-tile"
-          onClick={action.onClick}
-        >
-          {action.label}
-        </button>
-      )}
     </div>
   );
 }
@@ -917,9 +524,6 @@ function QuarterCard({
           );
         }
 
-        // État de paiement du mois : icône (forme + couleur) en bout de ligne.
-        const st = monthPayStatus(decl, data.quarter);
-
         const content = (
           <>
             <span className="q-month">{monthName(month, lang)}</span>
@@ -927,12 +531,8 @@ function QuarterCard({
               {t.netShort} {euro(decl.netSalary, lang)} · {t.contribShort}{" "}
               {euro(decl.contribution, lang)}
             </span>
-            <span
-              className={`q-check q-status-${st}`}
-              role="img"
-              aria-label={`${t.declared} · ${stateLabelFor(t, st)}`}
-            >
-              <PayStatusIcon status={st} size={18} />
+            <span className="q-check" role="img" aria-label={t.declared}>
+              <CheckIcon size={18} />
             </span>
           </>
         );
@@ -970,20 +570,7 @@ function QuarterCard({
 }
 
 /** Carte de paiement : QR EPC + informations de virement copiables.
- *  Affichée pour le mois impayé le plus ancien (règle d'imputation FIFO).
- *
- *  ERGONOMIE MOBILE : sur appareil tactile (le cas majoritaire), le QR ne
- *  sert à rien pour la personne (elle ne peut pas scanner son propre écran).
- *  Les champs copiables passent donc EN PREMIER et le QR devient optionnel
- *  (bouton « Afficher le code QR », pour scanner avec un autre appareil).
- *  Sur ordinateur : QR d'abord, puis les champs, comme avant.
- *
- *  MONTANT LIBRE : par défaut, le montant proposé est le SOLDE du mois
- *  (total si rien n'est versé, reste si un acompte existe). Le résident
- *  peut aussi encoder un montant de son choix (ex. 100 € sur 245 €) : le
- *  QR et le champ « Montant » suivent. La communication structurée ne
- *  change JAMAIS (le champ Paid est un CUMUL, §5.17 : plusieurs virements
- *  avec la même communication s'additionnent). */
+ *  Affichée pour le mois impayé le plus ancien (règle d'imputation FIFO). */
 function PaymentCard({
   month,
   amount,
@@ -998,46 +585,14 @@ function PaymentCard({
   lang: Language;
 }) {
   const t = labels[lang];
-  const isTouch = useCoarsePointer();
-
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
-  // Sur tactile, le QR est masqué par défaut et s'ouvre à la demande.
-  const [qrVisible, setQrVisible] = useState(false);
-
-  // Montant libre : champ optionnel, pré-rempli avec le solde du mois.
-  const [customMode, setCustomMode] = useState(false);
-  const [customRaw, setCustomRaw] = useState("");
-  const customParsed = parseAmount(customRaw);
-  const customValid =
-    customParsed !== null &&
-    customParsed >= 0.01 &&
-    customParsed <= amount + 0.005;
-
-  // Montant effectivement proposé au paiement : solde du mois par défaut,
-  // montant libre s'il est valide. null = montant libre INVALIDE -> ni QR
-  // ni champs (jamais d'ambiguïté sur ce qui serait payé).
-  const effectiveAmount = customMode
-    ? customValid
-      ? (customParsed as number)
-      : null
-    : amount;
-
-  // Le QR n'est généré que s'il sera montré (toujours sur ordinateur,
-  // à la demande sur tactile) et que le montant est valide.
-  const wantQr = effectiveAmount !== null && (!isTouch || qrVisible);
 
   // Génère le QR localement (aucun service externe, compatible CSP).
   useEffect(() => {
-    if (!wantQr || effectiveAmount === null) return;
     let cancelled = false;
     QRCode.toDataURL(
-      epcQrPayload(
-        payment.beneficiary,
-        payment.iban,
-        effectiveAmount,
-        structuredCom
-      ),
+      epcQrPayload(payment.beneficiary, payment.iban, amount, structuredCom),
       { width: 200, margin: 2, errorCorrectionLevel: "M" }
     )
       .then((url) => {
@@ -1049,7 +604,7 @@ function PaymentCard({
     return () => {
       cancelled = true;
     };
-  }, [wantQr, payment.beneficiary, payment.iban, effectiveAmount, structuredCom]);
+  }, [payment.beneficiary, payment.iban, amount, structuredCom]);
 
   const copy = async (field: string, value: string) => {
     try {
@@ -1061,13 +616,10 @@ function PaymentCard({
     }
   };
 
-  const amountText =
-    effectiveAmount === null
-      ? ""
-      : new Intl.NumberFormat(LOCALES[lang], {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-        }).format(effectiveAmount);
+  const amountText = new Intl.NumberFormat(LOCALES[lang], {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount);
 
   const fields: Array<{ key: string; label: string; value: string }> = [
     { key: "benef", label: t.beneficiaryLabel, value: payment.beneficiary },
@@ -1076,145 +628,43 @@ function PaymentCard({
     { key: "com", label: t.communicationLabel, value: structuredCom },
   ];
 
-  // Bloc des champs copiables (partagé entre les deux dispositions).
-  const fieldsBlock = (
-    <div className="payment-fields">
-      {fields.map((f) => (
-        <div className="pay-field" key={f.key}>
-          <span className="pf-label">{f.label}</span>
-          <span className="pf-value">{f.value}</span>
-          <button
-            type="button"
-            className="btn btn-outline btn-copy"
-            onClick={() => copy(f.key, f.value)}
-          >
-            {copiedField === f.key ? t.copied : t.copy}
-          </button>
-        </div>
-      ))}
-    </div>
-  );
-
-  // Bloc QR (image seule ; le texte d'intro diffère selon le contexte).
-  const qrImage = qrDataUrl && (
-    <img
-      src={qrDataUrl}
-      width={200}
-      height={200}
-      alt={`QR — ${t.payFor} ${monthName(month, lang)}`}
-    />
-  );
-
   return (
     <div className="payment-card">
       <p className="payment-for">
         {t.payFor} <strong>{monthName(month, lang)}</strong> ·{" "}
-        <strong>
-          {effectiveAmount !== null ? euro(effectiveAmount, lang) : "—"}
-        </strong>
+        <strong>{euro(amount, lang)}</strong>
       </p>
 
-      {/* Montant libre : solde complet par défaut, montant au choix sinon */}
-      <div className="pay-amount-choice">
-        {!customMode ? (
-          <button
-            type="button"
-            className="btn btn-outline btn-copy"
-            onClick={() => {
-              // Pré-rempli avec le solde : toujours valide à l'ouverture.
-              setCustomRaw(String(amount).replace(".", ","));
-              setCustomMode(true);
-            }}
-          >
-            {t.payOtherAmount}
-          </button>
-        ) : (
-          <div className={`field${customValid ? "" : " has-error"}`}>
-            <label htmlFor={`pay-amount-${month}`}>
-              {t.customAmountLabel}
-            </label>
-            <input
-              id={`pay-amount-${month}`}
-              type="text"
-              inputMode="decimal"
-              autoComplete="off"
-              value={customRaw}
-              onChange={(e) => setCustomRaw(e.target.value)}
-            />
-            <span className="helper">
-              {(customValid ? t.customAmountHelp : t.customAmountInvalid).replace(
-                "{max}",
-                euro(amount, lang)
-              )}
-            </span>
+      {qrDataUrl && (
+        <div className="qr-block">
+          <p>{t.scanQr}</p>
+          <img
+            src={qrDataUrl}
+            width={200}
+            height={200}
+            alt={`QR — ${t.payFor} ${monthName(month, lang)}`}
+          />
+        </div>
+      )}
+
+      <p className="payment-manual-intro">{t.orManual}</p>
+      <div className="payment-fields">
+        {fields.map((f) => (
+          <div className="pay-field" key={f.key}>
+            <span className="pf-label">{f.label}</span>
+            <span className="pf-value">{f.value}</span>
             <button
               type="button"
-              className="btn btn-outline btn-copy pay-amount-reset"
-              onClick={() => {
-                setCustomMode(false);
-                setCustomRaw("");
-              }}
+              className="btn btn-outline btn-copy"
+              onClick={() => copy(f.key, f.value)}
             >
-              {t.payFullAmount}
+              {copiedField === f.key ? t.copied : t.copy}
             </button>
           </div>
-        )}
-        {customMode &&
-          effectiveAmount !== null &&
-          amount - effectiveAmount > 0.005 && (
-            <p className="pay-remainder">
-              {t.remainderAfter.replace(
-                "{amount}",
-                euro(
-                  Math.round((amount - effectiveAmount) * 100) / 100,
-                  lang
-                )
-              )}
-            </p>
-          )}
+        ))}
       </div>
 
-      {effectiveAmount !== null &&
-        (isTouch ? (
-        <>
-          {/* MOBILE / TABLETTE : champs copiables d'abord, QR à la demande. */}
-          <p className="payment-manual-intro">{t.manualOnly}</p>
-          {fieldsBlock}
-          <p className="payment-note">{t.commNote}</p>
-
-          <div className="qr-toggle">
-            <button
-              type="button"
-              className="btn btn-outline"
-              aria-expanded={qrVisible}
-              onClick={() => setQrVisible((v) => !v)}
-            >
-              {qrVisible ? t.hideQrBtn : t.showQrBtn}
-            </button>
-            {qrVisible && (
-              <div className="qr-block qr-block-touch">
-                <p>{t.qrOtherDevice}</p>
-                {qrImage}
-              </div>
-            )}
-          </div>
-        </>
-      ) : (
-        <>
-          {/* ORDINATEUR : QR d'abord (on le scanne avec son téléphone). */}
-          {qrDataUrl && (
-            <div className="qr-block">
-              <p>{t.scanQr}</p>
-              {qrImage}
-            </div>
-          )}
-
-          <p className="payment-manual-intro">{t.orManual}</p>
-          {fieldsBlock}
-          <p className="payment-note">{t.commNote}</p>
-        </>
-      ))}
-
+      <p className="payment-note">{t.commNote}</p>
       <p className="payment-delay">{t.paidDelay}</p>
     </div>
   );
@@ -1317,16 +767,6 @@ function DeclarationForm({
           monthName(month, lang)
         )}
       </p>
-
-      {/* Aide littératie : où trouver brut et net sur la fiche de paie.
-          <details> natif : accessible clavier, aucun JavaScript. */}
-      <details className="declare-help">
-        <summary>{t.whereAmounts}</summary>
-        <div className="declare-help-body">
-          <p>{t.whereGross}</p>
-          <p>{t.whereNet}</p>
-        </div>
-      </details>
 
       {lines.map((line, i) => (
         <fieldset className="payslip" key={i}>
@@ -1442,51 +882,22 @@ export default function Portail() {
   const [status, setStatus] = useState<Status>("loading");
   const [current, setCurrent] = useState<MeResponse | null>(null);
 
-  // Pastille « Votre accès est activé » : première visite réussie uniquement
-  // (décidé dans init(), au moment où l'oid du compte est connu).
-  const [showActivated, setShowActivated] = useState(false);
-
   // Mois affiché dans les tuiles (par défaut : le plus récent).
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
 
   // Mois déclaré en cours de CORRECTION (formulaire pré-rempli).
   const [editingMonth, setEditingMonth] = useState<number | null>(null);
 
-  // Mois qui vient d'être déclaré/corrigé avec succès : confirmation verte
-  // au-dessus des tuiles (rassure et enchaîne vers le paiement).
-  // Effacé dès que l'utilisateur navigue ailleurs.
-  const [successMonth, setSuccessMonth] = useState<number | null>(null);
-
-  // Sélectionner un mois quitte toujours le mode correction
-  // et efface la confirmation de déclaration.
+  // Sélectionner un mois quitte toujours le mode correction.
   const selectMonth = (month: number) => {
     setSelectedMonth(month);
     setEditingMonth(null);
-    setSuccessMonth(null);
   };
 
   // Trimestre précédent : chargé à la demande, puis gardé en mémoire.
   const [view, setView] = useState<"current" | "previous">("current");
   const [prevStatus, setPrevStatus] = useState<PrevStatus>("idle");
   const [previous, setPrevious] = useState<MeResponse | null>(null);
-
-  // --- « Payer maintenant » : défilement vers la carte de paiement -----------
-  // payRef pointe sur la section paiement ; payScrollTick déclenche le
-  // défilement APRÈS le re-rendu (le mois impayé le plus ancien vient
-  // d'être sélectionné, la carte de paiement est donc bien montée).
-  const payRef = useRef<HTMLDivElement | null>(null);
-  const [payScrollTick, setPayScrollTick] = useState(0);
-
-  useEffect(() => {
-    if (payScrollTick === 0) return;
-    const reduceMotion = window.matchMedia(
-      "(prefers-reduced-motion: reduce)"
-    ).matches;
-    payRef.current?.scrollIntoView({
-      behavior: reduceMotion ? "auto" : "smooth",
-      block: "start",
-    });
-  }, [payScrollTick]);
 
   // --- Familles : plusieurs profils sur un même compte -----------------------
   // profiles : la liste des personnes liées au compte (null = pas encore su).
@@ -1501,16 +912,6 @@ export default function Portail() {
     try {
       const url = fa ? `/api/me?fa=${encodeURIComponent(fa)}` : "/api/me";
       const res = await fetch(url);
-      // Session expirée pendant la consultation : repartir vers la
-      // connexion plutôt que d'afficher une erreur incompréhensible.
-      // (assign() = même comportement que href, accepté par la règle
-      // ESLint react-hooks/immutability.)
-      if (res.status === 401) {
-        window.location.assign(
-          "/.auth/login/aad?post_login_redirect_uri=/portail"
-        );
-        return;
-      }
       if (res.status === 404) {
         setStatus("nodata");
         return;
@@ -1547,7 +948,6 @@ export default function Portail() {
   // les appels suivants (consultation, trimestre précédent, déclaration).
   const chooseProfile = (fa: string) => {
     setActiveFa(fa);
-    setSuccessMonth(null);
     // Le cache du trimestre précédent appartient à l'ANCIEN profil : on le vide.
     setPrevious(null);
     setPrevStatus("idle");
@@ -1560,7 +960,6 @@ export default function Portail() {
   const changeProfile = () => {
     setEditingMonth(null);
     setSelectedMonth(null);
-    setSuccessMonth(null);
     setView("current");
     setStatus("chooseProfile");
   };
@@ -1573,35 +972,14 @@ export default function Portail() {
         // 1) Qui est connecté ? (fourni par Azure Static Web Apps)
         const authRes = await fetch("/.auth/me");
         const authJson = (await authRes.json()) as {
-          clientPrincipal: { userDetails?: string; userId?: string } | null;
+          clientPrincipal: { userDetails?: string } | null;
         };
 
         // Pas connecté -> redirection vers la connexion Microsoft
         if (!authJson.clientPrincipal) {
-          window.location.assign(
-            "/.auth/login/aad?post_login_redirect_uri=/portail"
-          );
+          window.location.href =
+            "/.auth/login/aad?post_login_redirect_uri=/portail";
           return;
-        }
-
-        // Pastille « Votre accès est activé » : uniquement à la PREMIÈRE
-        // visite de ce compte sur cet appareil (l'activation vient d'aboutir),
-        // mémorisée en localStorage — clé par oid (userId = oid pour AAD,
-        // cf. apprentissages du projet). Décidé ICI, dans le flux asynchrone
-        // d'initialisation, et non dans un effet : la règle ESLint
-        // react-hooks interdit un setState synchrone dans le corps d'un effet.
-        try {
-          const oid = authJson.clientPrincipal.userId;
-          if (oid) {
-            const key = `ra-activated-${oid}`;
-            if (!window.localStorage.getItem(key)) {
-              window.localStorage.setItem(key, "1");
-              if (!cancelled) setShowActivated(true);
-            }
-          }
-        } catch {
-          // Stockage local indisponible (navigation privée stricte) : on
-          // n'affiche pas la pastille plutôt que la ré-afficher à chaque fois.
         }
 
         // 2) Récupérer SES données (filtrage fait côté serveur).
@@ -1619,30 +997,22 @@ export default function Portail() {
     };
   }, []);
 
-  // Déclaration/correction envoyée avec succès : recharge les données,
-  // ré-affiche le mois concerné (loadCurrent sélectionnerait sinon le plus
-  // récent) et montre la confirmation verte.
-  const handleDeclared = async (month: number) => {
-    await loadCurrent(activeFa);
-    setSelectedMonth(month);
-    setEditingMonth(null);
-    setSuccessMonth(month);
-  };
-
-  // Chargement (ou RE-chargement après erreur) du trimestre précédent.
-  const loadPrevious = async () => {
+  // Bascule vers le trimestre précédent (chargé une seule fois PAR profil :
+  // le cache est vidé à chaque changement de personne).
+  // force = true : relance la requête même si prevStatus n'est pas "idle"
+  // (bouton « Réessayer » après une erreur). ⚠ Ne PAS tenter d'appeler
+  // setPrevStatus("idle") puis showPrevious() : la valeur d'état lue ici
+  // provient de la closure du rendu courant et vaudrait encore "error" —
+  // le garde-fou ci-dessous annulerait silencieusement la relance.
+  const showPrevious = async (force = false) => {
+    setView("previous");
+    if (!force && prevStatus !== "idle") return;
     setPrevStatus("loading");
     try {
       const url = activeFa
         ? `/api/me?quarter=previous&fa=${encodeURIComponent(activeFa)}`
         : "/api/me?quarter=previous";
       const res = await fetch(url);
-      if (res.status === 401) {
-        window.location.assign(
-          "/.auth/login/aad?post_login_redirect_uri=/portail"
-        );
-        return;
-      }
       if (!res.ok) {
         setPrevStatus("error");
         return;
@@ -1653,14 +1023,6 @@ export default function Portail() {
     } catch {
       setPrevStatus("error");
     }
-  };
-
-  // Bascule vers le trimestre précédent (chargé une seule fois PAR profil :
-  // le cache est vidé à chaque changement de personne).
-  const showPrevious = () => {
-    setView("previous");
-    setSuccessMonth(null);
-    if (prevStatus === "idle") void loadPrevious();
   };
 
   // Déclaration affichée dans les tuiles (mois sélectionné, sinon la dernière).
@@ -1695,39 +1057,6 @@ export default function Portail() {
         .find((m) => (m.contribution ?? 0) - (m.paid ?? 0) > 0.005) ?? null
     : null;
 
-  // « Payer maintenant » : sélectionne le mois impayé le plus ancien (FIFO)
-  // puis fait défiler jusqu'à la carte de paiement (voir payScrollTick).
-  const goToPayment = () => {
-    if (oldestUnpaid) selectMonth(oldestUnpaid.month);
-    setPayScrollTick((n) => n + 1);
-  };
-
-  // Défilement vers la carte de paiement du mois AFFICHÉ (sans changer de
-  // mois) : utilisé par le bouton « Payer X € » de la tuile « Payé ».
-  const scrollToPayment = () => setPayScrollTick((n) => n + 1);
-
-  // Statut de paiement du TRIMESTRE : code couleur PARTAGÉ entre le bandeau
-  // du haut et la tuile « Reste à payer » (toujours synchronisés).
-  // vert = tout payé · rouge = au moins une échéance dépassée ·
-  // ambre = acompte(s) versé(s) · violet = rien versé (état normal).
-  const quarterStatus: PayStatus =
-    !current || current.months.length === 0 || remaining <= 0.005
-      ? "paid"
-      : current.months.some(
-            (m) => monthPayStatus(m, current.quarter) === "overdue"
-          )
-        ? "overdue"
-        : totalPaid > 0.005
-          ? "partial"
-          : "unpaid";
-
-  // Statut de paiement du mois AFFICHÉ (colore la tuile « Payé »).
-  const displayedStatus: PayStatus | null =
-    displayed && current ? monthPayStatus(displayed, current.quarter) : null;
-
-  // Libellé texte accompagnant chaque statut (jamais la couleur seule).
-  const stateLabel = (s: PayStatus): string => stateLabelFor(t, s);
-
   const quarterTitle = (data: MeResponse | null, base: string): string => {
     if (!data || data.quarter === null) return base;
     const [first, , last] = quarterMonths(data.quarter);
@@ -1748,18 +1077,11 @@ export default function Portail() {
           <span>fedasil</span>
         </div>
 
-        {/* Langue + déconnexion : la déconnexion doit rester visible en
-            permanence (postes partagés dans les centres d'accueil). */}
-        <div className="header-actions">
-          <LangPills
-            value={language}
-            onChange={setLanguage}
-            ariaLabel="Language / Langue / Taal"
-          />
-          <a className="btn btn-outline btn-logout" href={LOGOUT_URL}>
-            {t.logout}
-          </a>
-        </div>
+        <LangPills
+          value={language}
+          onChange={setLanguage}
+          ariaLabel="Language / Langue / Taal"
+        />
       </header>
 
       <main className="page">
@@ -1773,12 +1095,10 @@ export default function Portail() {
         <p className="page-subtitle">{t.intro}</p>
 
         <div className="card">
-          {showActivated && (
-            <div className="alert alert-success alert-flex" role="status">
-              <CheckIcon />
-              <span>{t.activated}</span>
-            </div>
-          )}
+          <div className="alert alert-success alert-flex" role="status">
+            <CheckIcon />
+            <span>{t.activated}</span>
+          </div>
 
           {/* Famille : rappel du profil consulté + changement de personne.
               Visible dans les deux vues (trimestre en cours et précédent). */}
@@ -1837,29 +1157,61 @@ export default function Portail() {
             </div>
           )}
 
+          {/* Erreur de chargement : TOUJOURS offrir une issue.
+              Sans ces boutons, un compte FAMILLE dont UN profil échoue reste
+              bloqué sur l'alerte : le sélecteur « Qui êtes-vous ? » n'est plus
+              atteignable (la barre « Changer de personne » n'existe que dans
+              l'état "ready") et seule la déconnexion reste possible.
+              - Réessayer         -> relance le MÊME profil (activeFa).
+              - Changer de personne -> retour au sélecteur (familles seulement). */}
           {status === "error" && (
-            <div
-              className="alert alert-error alert-flex alert-retry"
-              role="alert"
-            >
-              <span>{t.error}</span>
-              <button
-                type="button"
-                className="btn btn-outline"
-                onClick={() => {
-                  setStatus("loading");
-                  void loadCurrent(activeFa);
-                }}
-              >
-                {t.retry}
-              </button>
-            </div>
+            <>
+              <div className="alert alert-error" role="alert">
+                {t.error}
+              </div>
+              <div className="portal-actions">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => {
+                    setStatus("loading");
+                    void loadCurrent(activeFa);
+                  }}
+                >
+                  {t.retryBtn}
+                </button>
+                {profiles && profiles.length > 1 && (
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    onClick={changeProfile}
+                  >
+                    {t.profileChange}
+                  </button>
+                )}
+              </div>
+            </>
           )}
 
+          {/* Aucune donnée (404) : même piège pour les familles — un profil
+              sans données ne doit pas condamner l'accès aux autres. */}
           {status === "nodata" && (
-            <div className="alert alert-info" role="status">
-              {t.noData}
-            </div>
+            <>
+              <div className="alert alert-info" role="status">
+                {t.noData}
+              </div>
+              {profiles && profiles.length > 1 && (
+                <div className="portal-actions">
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    onClick={changeProfile}
+                  >
+                    {t.profileChange}
+                  </button>
+                </div>
+              )}
+            </>
           )}
 
           {/* ---------- Vue : trimestre en cours ---------- */}
@@ -1871,40 +1223,13 @@ export default function Portail() {
                 </div>
               ) : (
                 <>
-                  {/* Confirmation de la déclaration qui vient d'être envoyée
-                        (D) : mois + contribution recalculée par le serveur,
-                        lue dans les données rechargées. */}
-                  {successMonth !== null &&
-                    editingMonth === null &&
-                    !isMissingSelected &&
-                    displayed &&
-                    displayed.month === successMonth && (
-                      <div
-                        className="alert alert-success alert-flex"
-                        role="status"
-                      >
-                        <CheckIcon />
-                        <span>
-                          {t.declaredOk
-                            .replace(
-                              "{month}",
-                              monthName(successMonth, language)
-                            )
-                            .replace(
-                              "{amount}",
-                              euro(displayed.contribution, language)
-                            )}
-                        </span>
-                      </div>
-                    )}
-
                   {/* 1. Mois non déclaré sélectionné OU correction en cours
                         -> formulaire ; sinon tuiles du mois affiché */}
                   {isMissingSelected && selectedMonth !== null ? (
                     <>
-                      <SectionTitle icon={<PenIcon />}>
+                      <h2 className="portal-section-title">
                         {t.declareTitle}
-                      </SectionTitle>
+                      </h2>
                       <p className="month-caption">
                         {monthName(selectedMonth, language)}
                       </p>
@@ -1912,15 +1237,13 @@ export default function Portail() {
                         key={selectedMonth}
                         month={selectedMonth}
                         lang={language}
-                        onSubmitted={() => void handleDeclared(selectedMonth)}
+                        onSubmitted={() => loadCurrent(activeFa)}
                         fa={activeFa}
                       />
                     </>
                   ) : displayed && editingMonth === displayed.month ? (
                     <>
-                      <SectionTitle icon={<PenIcon />}>
-                        {t.correctBtn}
-                      </SectionTitle>
+                      <h2 className="portal-section-title">{t.correctBtn}</h2>
                       <p className="month-caption">
                         {monthName(displayed.month, language)}
                       </p>
@@ -1928,9 +1251,7 @@ export default function Portail() {
                         key={`edit-${displayed.month}`}
                         month={displayed.month}
                         lang={language}
-                        onSubmitted={() =>
-                          void handleDeclared(displayed.month)
-                        }
+                        onSubmitted={() => loadCurrent(activeFa)}
                         initial={{
                           gross: displayed.grossSalary,
                           net: displayed.netSalary,
@@ -1941,11 +1262,11 @@ export default function Portail() {
                     </>
                   ) : (
                     <>
-                      <SectionTitle icon={<FileTextIcon />}>
+                      <h2 className="portal-section-title">
                         {displayed && displayed.month === latestMonth
                           ? t.lastDeclaration
                           : t.displayedDeclaration}
-                      </SectionTitle>
+                      </h2>
                       {displayed && (
                         <>
                           <p className="month-caption">
@@ -1968,27 +1289,6 @@ export default function Portail() {
                             <DataTile
                               label={t.paid}
                               value={euro(displayed.paid, language)}
-                              tone={
-                                displayedStatus
-                                  ? toneForStatus(displayedStatus)
-                                  : undefined
-                              }
-                              sub={
-                                displayedStatus
-                                  ? stateLabel(displayedStatus)
-                                  : undefined
-                              }
-                              action={
-                                displayedDue > 0.005 && current.payment
-                                  ? {
-                                      label: t.payAmountBtn.replace(
-                                        "{amount}",
-                                        euro(displayedDue, language)
-                                      ),
-                                      onClick: scrollToPayment,
-                                    }
-                                  : undefined
-                              }
                             />
                           </div>
                           <div className="declare-correct">
@@ -2008,9 +1308,9 @@ export default function Portail() {
                   )}
 
                   {/* 2. Les mois du trimestre (cliquables) */}
-                  <SectionTitle icon={<CalendarIcon />}>
+                  <h2 className="portal-section-title">
                     {quarterTitle(current, t.quarterCurrent)}
-                  </SectionTitle>
+                  </h2>
                   <QuarterCard
                     data={current}
                     lang={language}
@@ -2019,9 +1319,7 @@ export default function Portail() {
                   />
 
                   {/* 3. Récapitulatif des paiements (l'info clé du résident) */}
-                  <SectionTitle icon={<EuroIcon />}>
-                    {t.paymentsTitle}
-                  </SectionTitle>
+                  <h2 className="portal-section-title">{t.paymentsTitle}</h2>
                   <div className="recap-grid">
                     <DataTile
                       label={t.toPay}
@@ -2034,27 +1332,18 @@ export default function Portail() {
                     <DataTile
                       label={t.remaining}
                       value={euro(remaining, language)}
-                      tone={toneForStatus(quarterStatus)}
-                      sub={stateLabel(quarterStatus)}
-                      onClick={
-                        remaining > 0.005 && current.payment
-                          ? goToPayment
-                          : undefined
-                      }
+                      tone={remaining === 0 ? "ok" : "highlight"}
                     />
                   </div>
 
                   {/* 4. Paiement : suit le mois sélectionné dans la carte
-                        (masqué pendant une déclaration ou une correction).
-                        payRef = cible du bouton « Payer maintenant ». */}
+                        (masqué pendant une déclaration ou une correction) */}
                   {!isMissingSelected &&
                     editingMonth === null &&
                     current.payment &&
                     displayed && (
-                    <div ref={payRef} className="pay-anchor">
-                      <SectionTitle icon={<EuroIcon />}>
-                        {t.payTitle}
-                      </SectionTitle>
+                    <>
+                      <h2 className="portal-section-title">{t.payTitle}</h2>
 
                       {displayedDue > 0.005 && displayed.structuredCom ? (
                         <PaymentCard
@@ -2105,7 +1394,7 @@ export default function Portail() {
                             </button>
                           </div>
                         )}
-                    </div>
+                    </>
                   )}
                 </>
               )}
@@ -2114,7 +1403,11 @@ export default function Portail() {
                 <button
                   type="button"
                   className="btn btn-outline"
-                  onClick={showPrevious}
+                  // ⚠ PAS onClick={showPrevious} : React passerait l'objet
+                  // événement en 1er argument, donc `force` serait truthy et
+                  // le cache du trimestre précédent serait rechargé à chaque
+                  // clic. La lambda garantit un appel SANS argument.
+                  onClick={() => void showPrevious()}
                 >
                   {t.seePrevious}
                 </button>
@@ -2125,9 +1418,9 @@ export default function Portail() {
           {/* ---------- Vue : trimestre précédent ---------- */}
           {status === "ready" && view === "previous" && (
             <>
-              <SectionTitle icon={<CalendarIcon />}>
+              <h2 className="portal-section-title">
                 {quarterTitle(previous, t.quarterPrevious)}
-              </SectionTitle>
+              </h2>
 
               {prevStatus === "loading" && (
                 <div className="loading-row" role="status">
@@ -2136,20 +1429,26 @@ export default function Portail() {
                 </div>
               )}
 
+              {/* Erreur sur le trimestre précédent : non bloquante (le bouton
+                  de retour au trimestre en cours est juste dessous), mais un
+                  « Réessayer » évite un aller-retour inutile.
+                  showPrevious(true) = relance FORCÉE (voir le commentaire de la
+                  fonction : le garde-fou anti-rechargement la bloquerait). */}
               {prevStatus === "error" && (
-                <div
-                  className="alert alert-error alert-flex alert-retry"
-                  role="alert"
-                >
-                  <span>{t.error}</span>
-                  <button
-                    type="button"
-                    className="btn btn-outline"
-                    onClick={() => void loadPrevious()}
-                  >
-                    {t.retry}
-                  </button>
-                </div>
+                <>
+                  <div className="alert alert-error" role="alert">
+                    {t.error}
+                  </div>
+                  <div className="portal-actions">
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      onClick={() => void showPrevious(true)}
+                    >
+                      {t.retryBtn}
+                    </button>
+                  </div>
+                </>
               )}
 
               {prevStatus === "ready" &&
@@ -2175,7 +1474,10 @@ export default function Portail() {
           )}
 
           <div className="card-footer">
-            <a className="btn btn-outline" href={LOGOUT_URL}>
+            <a
+              className="btn btn-outline"
+              href="/.auth/logout?post_logout_redirect_uri=%2F%3Floggedout%3D1"
+            >
               {t.logout}
             </a>
           </div>
