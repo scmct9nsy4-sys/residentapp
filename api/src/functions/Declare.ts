@@ -236,6 +236,21 @@ function buildFilter(field: string, value: string, isNumber: boolean): string {
   return `fields/${field} eq '${value.replace(/'/g, "''")}'`;
 }
 
+// ⚠ PRÉREQUIS D'INDEXATION (13/7/2026) : ce $filter s'appuie sur des colonnes
+// SharePoint INDEXÉES (Residents List : EntraOid, FedasilNumber, Title ;
+// KB-Cumul : FedasilNumber). Le header « Prefer:
+// HonorNonIndexedQueriesWarningMayFailRandomly » a été RETIRÉ : il autorisait
+// le filtrage sur colonnes NON indexées, au prix d'un échec ALÉATOIRE dès que
+// la liste dépasse 5000 éléments — soit, à ~1700 déclarations/mois, le 3e mois
+// de CHAQUE trimestre, exactement quand les résidents déclarent le plus.
+// Sans ce header, une colonne non indexée fait échouer la requête TOUT DE
+// SUITE et pour tout le monde (panne franche, diagnostiquable) au lieu de
+// tomber au hasard en production. Fail fast plutôt que fail random.
+//
+// ⚠ DÉPLOIEMENT : poser les index sur les listes AVANT de déployer ce code.
+// Dans l'autre ordre, le portail casse immédiatement pour tous les résidents.
+// Rappel : un index ne peut être créé que si la liste compte MOINS de 5000
+// éléments (donc, pour une KB-Cumul, juste après la rotation trimestrielle).
 async function queryItems(
   siteId: string,
   listId: string,
@@ -249,13 +264,20 @@ async function queryItems(
     `/items?$expand=fields($select=${selectFields.join(",")})` +
     `&$filter=${filterClause}&$top=50`;
   const res = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Prefer: "HonorNonIndexedQueriesWarningMayFailRandomly",
-    },
+    headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) {
-    context.log("Erreur lecture liste (/api/declare), statut:", res.status);
+    // Le seuil de vue de liste (5000) renvoie typiquement 400/403/503 : on le
+    // signale explicitement pour ne PLUS jamais chercher pendant des heures.
+    if (res.status === 400 || res.status === 403 || res.status === 503) {
+      context.log(
+        `Erreur lecture liste (/api/declare), statut: ${res.status} — CAUSE PROBABLE : ` +
+          `colonne de filtre NON INDEXÉE sur une liste de plus de 5000 éléments. ` +
+          `Vérifier les index SharePoint (Paramètres de la liste > Colonnes indexées).`
+      );
+    } else {
+      context.log("Erreur lecture liste (/api/declare), statut:", res.status);
+    }
     throw new Error("Impossible de lire les données.");
   }
   const json = (await res.json()) as {
