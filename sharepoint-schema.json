@@ -26,7 +26,8 @@
           "name": "Title",
           "type": "text",
           "documentOnly": true,
-          "note": "Colonne intégrée SharePoint. Contient le NUMÉRO NATIONAL (SP_NATIONALID_FIELD=Title). À confirmer en ouvrant une ligne."
+          "note": "Colonne intégrée SharePoint. Contient le NUMÉRO NATIONAL (SP_NATIONALID_FIELD=Title). À confirmer en ouvrant une ligne.",
+          "indexed": true
         },
         {
           "name": "FirstName",
@@ -50,12 +51,14 @@
           "name": "FedasilNumber",
           "type": "text",
           "documentOnly": true,
-          "note": "Clé maîtresse (FA). Unique et permanente. Saisie par le staff."
+          "note": "Clé maîtresse (FA). Unique et permanente. Saisie par le staff.",
+          "indexed": true
         },
         {
           "name": "EntraOid",
           "type": "text",
-          "note": "SEULE colonne à créer. oid du compte invité Entra. Écrit par /api/pre-inscription (et auto-réparation dans /api/me et /api/declare). Plusieurs lignes peuvent porter le même oid (familles). Variable SP_RESIDENT_OID_FIELD=EntraOid."
+          "note": "SEULE colonne à créer. oid du compte invité Entra. Écrit par /api/pre-inscription (et auto-réparation dans /api/me et /api/declare). Plusieurs lignes peuvent porter le même oid (familles). Variable SP_RESIDENT_OID_FIELD=EntraOid.",
+          "indexed": true
         }
       ]
     },
@@ -84,7 +87,8 @@
           "name": "FedasilNumber",
           "type": "text",
           "documentOnly": true,
-          "note": "FA (type texte confirmé par sp:inspect -> SP_FA_IS_NUMBER reste false)."
+          "note": "FA (type texte confirmé par sp:inspect -> SP_FA_IS_NUMBER reste false).",
+          "indexed": true
         },
         {
           "name": "Month",
@@ -131,7 +135,8 @@
       "columns": [
         {
           "name": "FedasilNumber",
-          "type": "text"
+          "type": "text",
+          "indexed": true
         },
         {
           "name": "Month",
@@ -169,7 +174,8 @@
       "columns": [
         {
           "name": "FedasilNumber",
-          "type": "text"
+          "type": "text",
+          "indexed": true
         },
         {
           "name": "Month",
@@ -207,7 +213,8 @@
       "columns": [
         {
           "name": "FedasilNumber",
-          "type": "text"
+          "type": "text",
+          "indexed": true
         },
         {
           "name": "Month",
@@ -282,7 +289,8 @@
         {
           "name": "FedasilNumber",
           "type": "text",
-          "note": "FA résolu après lettrage (vide tant que non imputé)."
+          "note": "FA résolu après lettrage (vide tant que non imputé).",
+          "indexed": true
         },
         {
           "name": "Month",
@@ -297,7 +305,8 @@
             "Imputé",
             "Anomalie"
           ],
-          "note": "État du lettrage : « À traiter » à l'import ; « Imputé » quand reporté dans Paid (KB-Cumul) ; « Anomalie » si irrésoluble (comm invalide, montant incohérent…)."
+          "note": "État du lettrage : « À traiter » à l'import ; « Imputé » quand reporté dans Paid (KB-Cumul) ; « Anomalie » si irrésoluble (comm invalide, montant incohérent…).",
+          "indexed": true
         }
       ]
     },
