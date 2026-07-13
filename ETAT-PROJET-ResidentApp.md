@@ -1,6 +1,6 @@
 # ÉTAT DU PROJET — ResidentApp (Fedasil)
 
-**Version 8 — 13 juillet 2026** (remplace la v7 du 12/7 — session « simulation, index SharePoint et fiabilité des requêtes »)
+**Version 9 — 13 juillet 2026 (soir)** (remplace la v8 du même jour — session « bascule automatique du trimestre : liste Config »)
 
 ---
 
@@ -19,6 +19,13 @@ aux résidents (public multilingue FR/NL/EN, invités via Entra B2B) de :
    de paie additionnées, contribution calculée automatiquement côté serveur).
 
 **Statut : parcours complet VALIDÉ EN PRODUCTION de bout en bout.**
+**Depuis la v9 (13/7 au soir)** : la **bascule trimestrielle est AUTOMATIQUE**
+— une liste SharePoint **`Config`** (ligne `ActiveQuarter`) écrite par
+`sp:rotate` porte le trimestre actif, lue par `Me.ts`/`Declare.ts` (§5.21,
+§10.0 TERMINÉ) : **plus aucune variable d'environnement à modifier, plus aucun
+redéploiement** à chaque clôture. Le fail-fast introduit le matin a révélé et
+fait corriger **deux pannes de production** (index manquant sur KB-Cumul T2 ;
+`$filter` sur colonne `Month` non indexée → `/api/declare` en 500) — §11ter.
 Depuis la v5 : **session ergonomie complète du 12/7**
 (CHANGELOG-session-2026-07-12.md) — carte de paiement adaptée au **mobile**
 (champs copiables d'abord, QR replié sur tactile), **statuts de paiement
@@ -52,7 +59,7 @@ hiérarchique** (§10).
 | Fichier | Rôle |
 |---|---|
 | `src/App.tsx` | Page publique : formulaire de pré-inscription **minimal (NN + e-mail + langue de contact ; prénom/nom et « nom d'utilisateur » supprimés)** + avis informatif bleu « adresse déjà connue » (jamais bloquant) + bandeau « Déjà inscrit ? » → /portail + avis post-déconnexion (trilingue). **v6 (12/7)** : NN **formaté à la volée** (`00.00.00-000.00`), séparateurs acceptés à la saisie ET au collage, **contrôle modulo 97** client (NN + BIS, §5.19) ; langue de contact synchronisée via gestionnaire d'événement (ESLint v6, plus d'effet) |
-| `src/Portail.tsx` | Espace sécurisé : **sélecteur de profils familiaux** (écran « Qui êtes-vous ? » sur `needsProfile`, barre « Vous consultez le dossier de … » + « Changer de personne », FA actif propagé à /api/me et /api/declare), dernière déclaration en tuiles, carte du trimestre (mois cliquables, mois manquants déclarables via « + »), récapitulatif paiements, carte de paiement QR EPC, formulaire de déclaration/correction multi-fiches, bascule trimestre précédent (cache vidé au changement de personne). **v6 (12/7)** : ergonomie mobile (`useCoarsePointer`, QR replié sur tactile), statuts de paiement 4 couleurs + formes (§5.18), bouton « Payer X € » sur la tuile « Payé » et tuile « Reste à payer » cliquable (FIFO), **montant libre**, confirmation verte post-déclaration (mois maintenu sélectionné), aide `<details>` fiche de paie, pictogrammes de section, boutons « Réessayer », 401 → reconnexion (`window.location.assign`), pastille d'activation UNIQUE (localStorage `ra-activated-{oid}`), déconnexion aussi dans l'en-tête |
+| `src/Portail.tsx` | **v9 (13/7 soir)** : les écrans d'erreur offrent enfin une ISSUE — boutons « Réessayer » (relance le même profil) et « Changer de personne » (familles) dans les états `error` ET `nodata` ; « Réessayer » aussi sur l'erreur du trimestre précédent (`showPrevious(force)`). Espace sécurisé : **sélecteur de profils familiaux** (écran « Qui êtes-vous ? » sur `needsProfile`, barre « Vous consultez le dossier de … » + « Changer de personne », FA actif propagé à /api/me et /api/declare), dernière déclaration en tuiles, carte du trimestre (mois cliquables, mois manquants déclarables via « + »), récapitulatif paiements, carte de paiement QR EPC, formulaire de déclaration/correction multi-fiches, bascule trimestre précédent (cache vidé au changement de personne). **v6 (12/7)** : ergonomie mobile (`useCoarsePointer`, QR replié sur tactile), statuts de paiement 4 couleurs + formes (§5.18), bouton « Payer X € » sur la tuile « Payé » et tuile « Reste à payer » cliquable (FIFO), **montant libre**, confirmation verte post-déclaration (mois maintenu sélectionné), aide `<details>` fiche de paie, pictogrammes de section, boutons « Réessayer », 401 → reconnexion (`window.location.assign`), pastille d'activation UNIQUE (localStorage `ra-activated-{oid}`), déconnexion aussi dans l'en-tête |
 | `src/styles/fedasil.css` | Design tokens charte Fedasil (violet #644391, rouge #d1103b, gris #676362) + sections 10-17 (trimestre, paiement, déclaration, profils, littératie, statuts de paiement/montant libre). Aucun style inline (CSP `style-src 'self'`) |
 | `src/main.tsx`, `src/i18n/*` | Inchangés. Libellés du portail locaux à `Portail.tsx` |
 | `public/staticwebapp.config.json` | **Emplacement critique : `public/`** (voir §9). Bloc `auth` (fournisseur AAD personnalisé), routes protégées `/api/me` et `/api/declare`, fallback SPA, en-têtes de sécurité + CSP durcie |
@@ -64,6 +71,11 @@ hiérarchique** (§10).
 | `Subscription.ts` | POST /api/pre-inscription | Pré-inscription + invitation B2B. Après invitation réussie, écrit e-mail + `oid` sur la ligne resident (retrouvée par NN). **Nouveau v5 :** corps minimal `{ nationalId, email, contactLanguage }` ; **prénom/nom lus depuis la liste resident** (colonnes FirstName/LastName) pour le displayName de l'invitation et l'e-mail « Bonjour \<Prénom\> » — jamais renvoyés au navigateur (anti-oracle NN → nom). **Comptes internes (membres du tenant)** : détection par `findMemberByEmail` → liaison directe de l'oid SANS invitation (Graph la refuserait : domaine vérifié), e-mail avec lien vers le portail (`PORTAL_URL`) ; soumis au **garde-fou fail-closed** de la liste « ResidentApp Aidants » (lecture complète + comparaison normalisée, PAS de $filter — voir §11). Champs historiques (`firstName`, `lastName`, `username`) encore acceptés mais ignorés. Endpoint `/check-email` conservé (usage informatif côté front). |
 | `Me.ts` | GET /api/me | Identité → profil(s) resident → déclarations du trimestre triées mois décroissant. `?quarter=previous`, `?fa=<FA>` (profil actif, vérifié serveur). Bloc `payment`, `structuredCom` par mois. Renvoie `needsProfile` + `profiles` si plusieurs personnes sur un même compte. |
 | `Declare.ts` | POST /api/declare | Déclaration/correction : contribution recalculée serveur, communication structurée générée, mois limité au trimestre en cours, `Paid` préservé à la correction. Champ `fa` optionnel vérifié serveur (familles). |
+
+**Module partagé `api/src/shared/quarterConfig.ts` (13/7)** : `getActiveQuarter()`
+— trimestre actif lu dans la liste `Config` (§5.21), cache mémoire ~5 min,
+repli variables d'environnement journalisé. Utilisé par `Me.ts` ET `Declare.ts`
+(fini le « garder les deux synchronisées » pour cette partie).
 
 Sécurité commune : identité via `x-ms-client-principal` uniquement ; **`oid`
 résolu depuis les claims OU depuis `userId` du principal** (voir §9), FA résolu
@@ -337,12 +349,16 @@ arrivent vers le **15** du même mois → phase de contrôle.
 
 **Point d'architecture clé :** le « trimestre courant » de l'application est
 le trimestre **en cours de déclaration** (décalé), PAS le trimestre
-calendaire. La bascule des variables `SP_CUMUL_LIST_NAME` / `SP_CUMUL_LIST_ID`
-/ `SP_CUMUL_PREV_LIST_NAME` (+ redéploiement) **EST** la clôture métier :
-c'est elle qui ferme les déclarations de l'ancien trimestre et ouvre le
-nouveau. Procédure outillée : `PROCEDURE-BASCULE-TRIMESTRE.md` +
-`npm run sp:rotate` (§7). Toute automatisation future doit encoder ce
-calendrier décalé.
+calendaire.
+
+**Depuis le 13/7/2026 (§5.21, chantier §10.0 TERMINÉ), la clôture métier est
+l'écriture de la ligne `ActiveQuarter` dans la liste SharePoint `Config`**,
+proposée par `sp:rotate` à la fin de la rotation (confirmation `BASCULER`).
+C'est elle qui ferme les déclarations de l'ancien trimestre et ouvre le
+nouveau — **plus aucune variable d'environnement à modifier, plus aucun
+redéploiement**. Les variables `SP_CUMUL_LIST_NAME` / `SP_CUMUL_LIST_ID` /
+`SP_CUMUL_PREV_LIST_NAME` ne servent plus que de **repli**. Procédure
+outillée : `PROCEDURE-BASCULE-TRIMESTRE.md` (v3) + `npm run sp:rotate` (§7).
 
 ### 5.17 Paiements — modèle
 
@@ -434,6 +450,34 @@ et renvoyer moins de 5000 lignes (filtres composés — discipline « 5000 »,
 CONCEPTION-STAFF-APP §6). Volumétrie constatée : ~2000 lignes/trimestre
 (données de test T4), soit ~8000/an.
 
+### 5.21 Liste « Config » — trimestre actif de l'application (créée le 13/7/2026)
+
+Chantier §10.0. Liste permanente, **une ligne par clé de configuration**
+(colonne `Title`). Ligne **`ActiveQuarter`** = trimestre courant du portail :
+`Quarter` (1-4), `Year`, `CumulListId`, `CumulListName`, `RotationNote`
+(traçabilité).
+
+- **Écrite par `sp:rotate`** à la FIN de la rotation (après archivage et vidage
+  réussis), sur confirmation SÉPARÉE en tapant **`BASCULER`** — le vidage et
+  l'activation restent deux décisions distinctes. Mode **`--config-only`** :
+  bascule seule, sans toucher aux données (initialisation, récupération).
+  **`--annee=YYYY`** : année du trimestre ACTIVÉ (défaut : année courante,
+  correcte pour les 4 dates du calendrier §5.16 — à ne pas confondre avec
+  l'année des données ARCHIVÉES, passée en 2ᵉ argument positionnel).
+- **Lue par `Me.ts` et `Declare.ts`** via le module partagé
+  `api/src/shared/quarterConfig.ts` : **cache mémoire ~5 min** (les Functions
+  restent chaudes), lecture **SANS `$filter`** (liste minuscule : aucun enjeu
+  d'index ni de seuil des 5000), **repli** sur les variables d'environnement
+  si la liste est absente ou la ligne invalide (journalisé `⚠ REPLI`, cache
+  court de 60 s pour sortir vite du repli).
+- **Le piège « l'ID prime sur le nom » disparaît structurellement** : l'ID et
+  le nom sont écrits ENSEMBLE, par le même script, au même instant. Le
+  trimestre précédent est DÉRIVÉ (T actif − 1, bouclage T1 → T4).
+- **Source de vérité partagée** : la future app staff lira la même liste.
+- ⚠ **Ne jamais éditer la ligne à la main** (sauf urgence) : passer par
+  `sp:rotate --config-only`. `Quarter` (1-4) et `Year` sont validés à la
+  lecture ; une ligne invalide déclenche le repli.
+
 ## 6. Données SharePoint
 
 ### 6.0 VOLUME DE RÉFÉRENCE (établi le 13/7/2026) — chiffre structurant
@@ -487,18 +531,36 @@ Index en place sur le site de test (`Resident_Test`) :
 Le schéma `sharepoint-schema.json` porte désormais `"indexed": true` sur ces
 colonnes : toute liste **recréée** par `sp:provision` le sera avec ses index.
 
-**⚠ DEUX RÈGLES ABSOLUES :**
+**⚠ TROIS RÈGLES ABSOLUES :**
 
-1. **Un index ne peut être créé que si la liste compte MOINS de 5 000
+1. 🔴 **RÈGLE CORRIGÉE LE 13/7 AU SOIR — Graph refuse un `$filter` sur colonne
+   non indexée IMMÉDIATEMENT, quelle que soit la taille de la liste** (400),
+   y compris sur une liste de 1 300 lignes. Le seuil des 5 000 n'est **pas** la
+   condition du refus : c'était seulement le moment où l'ancien header
+   `HonorNonIndexed…` cessait de masquer le problème. **Conséquence : TOUTE
+   colonne apparaissant dans un `$filter` doit être indexée — ou ne pas
+   apparaître dans le filtre.** (Deux pannes de production l'ont démontré le
+   soir même : index manquant sur KB-Cumul T2, et filtre sur la colonne `Month`
+   dans `Declare.ts` — voir §11ter.)
+2. **Un index ne peut être créé que si la liste compte MOINS de 5 000
    éléments.** Au-delà, SharePoint refuse. Pour une KB-Cumul (qui atteint le
    seuil au 3ᵉ mois), **la seule fenêtre sûre est juste après la rotation
    trimestrielle, sur liste vide** → étape intégrée à
    PROCEDURE-BASCULE-TRIMESTRE.md.
-2. **Lors du passage en production : poser les index sur les listes Fedasil
+3. **Lors du passage en production : poser les index sur les listes Fedasil
    AVANT de déployer le code.** Le header `HonorNonIndexed…` ayant été retiré
    (voir ci-dessous), déployer le code sur des listes non indexées casserait
    **immédiatement** le portail pour TOUS les résidents. L'ordre n'est pas
    négociable.
+
+**🔴 Le schéma NE PORTAIT PAS les `"indexed": true` annoncés (corrigé le 13/7
+au soir).** La v8 affirmait que `sharepoint-schema.json` portait ces flags :
+c'était FAUX — seule la liste Soldes les avait. Les 9 flags manquants
+(Residents List ×3, KB-Cumul T1-T4 ×1, KB-Paiements ×2) ont été ajoutés.
+**`sp:provision` sert désormais d'AUDIT D'INDEX** : toute colonne déclarée
+indexée qui ne l'est pas produit un ⚠ (il ne la modifie jamais — principe
+« jamais de modification »). C'est l'outil qui listera les index à poser à la
+main sur le tenant Fedasil, AVANT le déploiement du code.
 
 **Retrait du header (13/7/2026)** : `Prefer:
 HonorNonIndexedQueriesWarningMayFailRandomly` a été supprimé de `queryItems()`
@@ -545,6 +607,11 @@ Pacifique américain, ce qui décale tous les affichages d'horodatage).
   s'y ajouteront par provisioning, protégées de la synchronisation.
 - Lettrage cible : import CSV bancaire → rapprochement automatique → alimente
   `Paid` → base des **rappels automatiques** (par lots, validés par un humain).
+- Liste **Config** (créée le 13/7/2026 par provisioning) : trimestre actif de
+  l'application (règle §5.21). Une ligne par clé (`Title`), aujourd'hui la
+  seule : `ActiveQuarter`. Colonnes : `Quarter`, `Year`, `CumulListId`,
+  `CumulListName`, `RotationNote`. Aucune colonne indexée (liste minuscule,
+  lue sans `$filter`).
 - NB d'ergonomie : les listes créées par API n'apparaissent PAS dans le menu
   latéral du site — les ajouter au lancement rapide (paramètres de liste →
   « Nom, description et navigation », ou édition du menu).
@@ -567,6 +634,15 @@ La structure SharePoint est décrite dans le dépôt et appliquée en une comman
   confirmation en tapant `VIDER`, mode `--export-only`, reprise sur
   limitation de débit Graph. ⚠ `archives/` contient des données personnelles
   → **doit figurer dans `.gitignore`**.
+  **v2 (13/7, §10.0)** : après le vidage, écrit la ligne `ActiveQuarter` de la
+  liste `Config` sur confirmation SÉPARÉE (`BASCULER`) — **c'est la bascule
+  métier** (§5.21). Modes ajoutés : **`--config-only`** (bascule seule, sans
+  toucher aux données : initialisation d'un site, récupération) et
+  **`--annee=YYYY`** (année du trimestre ACTIVÉ ; défaut = année courante).
+  `--export-only` ne bascule JAMAIS. Une liste déjà vide propose tout de même
+  la bascule (clôturer un trimestre sans données reste une clôture). Si la
+  liste `Config` est absente, la rotation N'ÉCHOUE PAS : le script indique la
+  commande de rattrapage.
 - **`scripts/snapshot-soldes.ts`** (12/7) : synchronisation KB-Cumul →
   **Soldes** (§5.20) — upsert idempotent (clé `Title`), `--dry-run`,
   colonnes calculées (`Balance`, `PayStatus`, `DueDate`, `YearMonth`),
@@ -658,6 +734,13 @@ Sur la SWA **et** dans `api/local.settings.json` (dev) :
   n'appelle pas Entra). Le `<TENANT_ID>` de `openIdIssuer` dans
   `staticwebapp.config.json` doit être la vraie valeur
   (`c5f3f27c-2dde-4f56-b914-f1831522edae`).
+- **Trimestre actif (13/7, §5.21)** : `SP_CONFIG_LIST_NAME` (déf. « Config »),
+  `SP_CONFIG_LIST_ID` (optionnel, économise la résolution par nom).
+  ⚠ **`SP_CUMUL_LIST_ID` / `SP_CUMUL_LIST_NAME` / `SP_CUMUL_PREV_LIST_NAME` ne
+  pilotent PLUS le portail** : elles ne servent que de **repli** si la liste
+  `Config` devient illisible. Les garder à jour reste souhaitable (un repli sur
+  des valeurs périmées servirait un ancien trimestre) mais n'est plus urgent ni
+  bloquant — étape E, optionnelle, de la procédure de bascule.
 - SharePoint : `SP_SITE_HOSTNAME`, `SP_SITE_PATH`, `SP_LIST_ID`,
   `SP_EMAIL_FIELD`, `SP_RESIDENT_FA_FIELD`, **`SP_RESIDENT_OID_FIELD`
   (déf. `EntraOid`)**, **`SP_FIRSTNAME_FIELD` (déf. `FirstName`)**,
@@ -728,40 +811,31 @@ colorés, boutons de paiement intégrés aux tuiles, montant libre, pastille
 d'activation unique, aide fiche de paie, « Réessayer », 401 → reconnexion,
 NN formaté + modulo 97 client, conformité ESLint react-hooks v6).
 
-📅 **ÉCHÉANCE PROCHE : première bascule réelle T2 → T3 le 1er août 2026**
-(§5.16). Prévoir une **répétition à blanc** avant (archivage `--export-only`
-sur les données réelles, relecture de PROCEDURE-BASCULE-TRIMESTRE.md,
-checklist du jour J : variables SWA + re-run du DERNIER workflow).
+✅ **TERMINÉ (v9, 13/7 soir) — CHANTIER §10.0 : bascule automatique du
+trimestre** (liste `Config`, règle §5.21) : schéma, `sp:rotate` v2
+(`BASCULER`, `--config-only`, `--annee`), module partagé `quarterConfig.ts`,
+lecture dans `Me.ts`/`Declare.ts`, PROCEDURE-BASCULE-TRIMESTRE v3.
+**Validé en production** (site de test) : ligne `ActiveQuarter` écrite,
+trace `source : Config` confirmée dans Application Insights.
+Corrigés dans la foulée : **deux pannes de production** révélées par le
+fail-fast (index manquant sur KB-Cumul T2 ; `$filter` sur la colonne `Month`
+non indexée dans `Declare.ts` → 500 à CHAQUE déclaration) et les **écrans
+d'erreur sans issue** de `Portail.tsx`. Voir §11ter.
 
-0. 🔴 **CHANTIER OUVERT — Bascule automatique du trimestre (liste `Config`)**
-   *Décidé le 13/7, cadré, NON commencé — à démarrer à la prochaine session.*
+📅 **ÉCHÉANCE REQUALIFIÉE (13/7 soir) : la « bascule réelle du 1er août 2026 »
+N'EST PLUS une échéance ferme.** L'application ne sera très probablement pas
+validée métier ni répliquée sur le tenant Fedasil d'ici là : il n'y aura donc
+rien à basculer en production ce jour-là. **La première bascule réelle sera
+celle du premier trimestre suivant la mise en service, quelle qu'elle soit** —
+la procédure est indifférente au trimestre.
+⚠ **Mais la RÉPÉTITION GÉNÉRALE reste obligatoire AVANT cette première bascule
+réelle** (backlog, point 12) : dérouler `sp:soldes` → `sp:rotate` (`VIDER` +
+`BASCULER`) → index sur liste vide → vérification du portail, sur le site de
+test.
 
-   **Problème constaté** : le trimestre affiché par le portail est figé dans les
-   variables d'environnement (`SP_CUMUL_LIST_NAME` / `SP_CUMUL_LIST_ID`). Il
-   faut donc les modifier à chaque bascule ET redéployer. ⚠ Piège vérifié :
-   **`SP_CUMUL_LIST_ID` est PRIORITAIRE sur le nom** (`Me.ts` §507-509) — changer
-   le seul nom ne produit aucun effet, sans le moindre message d'erreur.
-
-   **Solution retenue (option B)** : une liste SharePoint **`Config`** (une
-   ligne : trimestre actif, année) écrite par **`sp:rotate` À LA FIN de la
-   rotation** (donc après archivage et vidage réussis). `Me.ts` / `Declare.ts`
-   la lisent, avec **cache mémoire** (~5 min, les Functions restent chaudes) et
-   **repli sur les variables d'environnement** si `Config` est illisible.
-   → La bascule métier devient la rotation elle-même. Plus de variable, plus de
-   redéploiement, plus d'oubli.
-
-   **Option A écartée** (déduire le trimestre de la date) : le 1ᵉʳ avril à 00h00
-   le code basculerait sur `KB-Cumul T2`, qui contient encore **T2 de l'année
-   précédente** tant que la rotation n'a pas tourné → les résidents verraient
-   des données vieilles d'un an. La bascule doit suivre la ROTATION, pas le
-   CALENDRIER (rappel : la bascule T2→T3 réelle est prévue le **1er août**, pas
-   le 1er juillet — un mois de décalage assumé).
-
-   Bonus : l'app staff a le même besoin → `Config` devient la source de vérité
-   unique et partagée entre les deux applications.
-
-0bis. 🔴 **CHANTIER OUVERT — Historique multi-trimestres pour le résident**
-   *Décidé le 13/7, cadré, NON commencé — À FAIRE APRÈS le chantier `Config`.*
+0. 🔴 **CHANTIER OUVERT — Historique multi-trimestres pour le résident**
+   *(ex-§10.0bis — devient le chantier prioritaire, le §10.0 étant terminé.)*
+   *Décidé et cadré le 13/7, NON commencé.*
 
    **Besoin métier (confirmé le 13/7)** : le résident doit pouvoir consulter
    **au moins les 4 derniers trimestres, courant compris**.
@@ -781,8 +855,12 @@ checklist du jour J : variables SWA + re-run du DERNIER workflow).
 
    Touche `Me.ts` (nouvelle lecture Soldes) **et le frontend** (`Portail.tsx` :
    le bouton « trimestre précédent » devient un sélecteur ; l'API doit indiquer
-   les trimestres disponibles). Chantier volontairement DÉCOUPÉ du précédent
-   pour ne pas mélanger auth, API et UI dans un même diff.
+   les trimestres disponibles).
+
+   **Questions à trancher AVANT de coder** : combien de trimestres exactement ?
+   Que fait-on des mois sans déclaration (absents de Soldes) ? Le paiement
+   reste-t-il possible sur un trimestre archivé (le QR EPC a-t-il un sens sur
+   une dette ancienne) ?
 
 1. **Gouvernance de l'ANNÉE** : modèle confirmé = 4 listes permanentes à ID
    fixes, archivées puis vidées à la bascule (§5.16-5.17). Reste : nommer les
@@ -864,6 +942,37 @@ checklist du jour J : variables SWA + re-run du DERNIER workflow).
     avec `sp:inspect`, tester le contrat Soldes §5.20 — reprise d'historique
     vs succession, voir CONCEPTION-STAFF-APP §3.4), et validation business
     des règles §5.2/§5.13.
+
+12. **Répétition générale de la bascule** (obligatoire AVANT la première
+    bascule réelle, quelle qu'en soit la date) : sur le site de test, dérouler
+    la procédure complète — `sp:soldes -- T3 2025` → `sp:rotate -- T3 2025`
+    (`VIDER` puis `BASCULER`) → vérifier l'index `FedasilNumber` sur la liste
+    vidée → portail sur T3 vide en ≤ 5 min → retour à T2 par `--config-only` et
+    `sp:seed` pour restaurer la simulation. ⚠ Consomme les données de
+    simulation T3 (regénérables).
+
+13. 🟠 **[QUESTION MÉTIER — à trancher avec le business] TROP-PERÇU après
+    correction à la baisse** *(constaté le 13/7 au soir)*. Un résident qui
+    corrige sa déclaration **à la baisse APRÈS avoir payé** se retrouve avec
+    `Paid > Contribution` — et **rien ne l'indique**, nulle part :
+    - **portail** : `monthPayStatus()` ne connaît que 4 états (à payer /
+      acompte / payé / échu) ; un solde négatif tombe dans « payé » (vert) ;
+    - **donnée (Soldes)** : `Balance` devient négatif et `PayStatus` vaut
+      `Paid` (règle `Balance ≤ 0 → Paid`, §5.20) : la donnée est juste mais ne
+      distingue pas « soldé » de « trop-perçu ». Un état `Overpaid` réglerait
+      l'affaire — **décision métier**.
+    - **Questions pour le business** : que fait-on d'un trop-perçu (imputation
+      sur une dette antérieure ? report sur le mois suivant ? remboursement ?),
+      et **la correction à la baisse après paiement doit-elle rester libre** ?
+      (Vecteur d'abus possible : déclarer haut, payer, corriger bas pour
+      générer un crédit → contrôle staff à prévoir, module 2.)
+    Aucune règle n'est codée aujourd'hui : le serveur recalcule la contribution
+    et ne touche pas à `Paid` (§5.9) — comportement correct, mais le cas n'a
+    jamais été pensé.
+
+14. **Test de charge à l'hypothèse de dimensionnement** (2 000 déclarations/mois,
+    §6.0) : le jeu de simulation actuel tourne à ~1 480/mois. Ajuster la
+    constante de `seed-simulation.ts`, purger, regénérer.
 
 ## 11. Leçons de la session du 9/7 (option 1 + provisioning)
 
@@ -1030,6 +1139,13 @@ checklist du jour J : variables SWA + re-run du DERNIER workflow).
   moment. **Indexer, puis retirer le header** : on préfère une panne franche et
   immédiate à une panne aléatoire et tardive. *Fail fast plutôt que fail
   random.*
+  ⚠ **NUANCE APPORTÉE LE SOIR MÊME (voir §11ter et §6.1)** : la formulation
+  « échouera une fois les 5 000 éléments dépassés » est INEXACTE. Sans le
+  header, Graph refuse le `$filter` sur colonne non indexée **immédiatement,
+  quelle que soit la taille de la liste**. Le seuil des 5 000 n'était que le
+  moment où le header cessait de sauver la mise. La conclusion (indexer, puis
+  retirer le header) reste juste ; le mécanisme, lui, est plus strict qu'écrit
+  ici.
 
 - **VÉRIFIER LE CODE AVANT DE RECOMMANDER UNE RÉÉCRITURE (leçon répétée).**
   Une recommandation de réécrire `Me.ts` « pour passer en `$filter` » a été
@@ -1069,63 +1185,124 @@ checklist du jour J : variables SWA + re-run du DERNIER workflow).
   Confondre les deux dans une note à la hiérarchie coûterait en crédibilité ;
   les séparer la renforce.
 
+## 11ter. Leçons de la session du 13/7 au SOIR (bascule Config — et ses deux pannes)
+
+- 🔴 **La règle des index était MAL COMPRISE, et ça a coûté deux pannes.**
+  On croyait : « colonne non indexée = risque AU-DELÀ de 5 000 éléments ».
+  La réalité : **Graph refuse un `$filter` sur colonne non indexée
+  IMMÉDIATEMENT (400), même sur une liste de 1 300 lignes.** Le seuil des 5 000
+  n'était que le moment où l'ancien header `HonorNonIndexed…` cessait de
+  masquer le problème. **Règle correcte : toute colonne d'un `$filter` doit
+  être indexée — ou disparaître du filtre.**
+
+- **Panne 1 — l'index manquant sur KB-Cumul T2.** Le portail est tombé
+  (`/api/me` en 500) dès que Config a désigné T2 comme trimestre courant : T2
+  était la SEULE des quatre KB-Cumul dont `FedasilNumber` n'était pas indexé.
+  Personne ne l'avait vu, parce que les variables d'environnement pointaient
+  ailleurs. **Leçon : avoir vérifié l'index sur LA liste servie ne dit rien des
+  trois autres.** Et le fail-fast a fait exactement son travail : panne franche,
+  message explicite, correction en 2 minutes — au lieu d'une panne aléatoire au
+  3ᵉ mois du trimestre, avec 1 700 résidents dessus.
+
+- **Panne 2 — `/api/declare` en 500 à CHAQUE déclaration.** Le filtre
+  « déclaration déjà existante ? » portait sur DEUX colonnes :
+  `FedasilNumber` (indexée) **et `Month` (non indexée)** → 400 → 500.
+  Bug présent depuis le retrait du header le 13/7 au matin, resté invisible
+  faute d'avoir rejoué une déclaration derrière. **Correctif : filtrer sur le
+  SEUL `FedasilNumber` (indexé, ≤ 3 lignes par résident et par trimestre) et
+  sélectionner le mois EN CODE.** Choisi PLUTÔT que d'indexer `Month` : on
+  supprime la dépendance au lieu de la satisfaire — un index de moins à créer,
+  à vérifier, et surtout à ne pas oublier lors de la réplication production.
+
+- **Après un changement d'infrastructure, REJOUER LES TROIS CHEMINS
+  CRITIQUES** : connexion (`/api/me`), consultation du trimestre précédent, et
+  **déclaration/correction** (`/api/declare`). Le retrait du header a laissé
+  passer DEUX régressions muettes faute de ce test. À faire systématiquement.
+
+- **La documentation peut mentir — vérifier le fichier, pas la doc.**
+  La v8 affirmait que `sharepoint-schema.json` portait les `"indexed": true` :
+  c'était faux (seule Soldes les avait). Elle affirmait aussi que `Portail.tsx`
+  avait des boutons « Réessayer » (v6) : il n'y en avait aucun. **Deux fois, la
+  vérité était dans le fichier, pas dans l'état projet.** *(À rapprocher de la
+  leçon du matin : ouvrir le code AVANT de recommander une réécriture.)*
+
+- **Écrans d'erreur sans issue (corrigé)** : dans les états `error` et `nodata`,
+  `Portail.tsx` n'affichait qu'une alerte — sans « Réessayer » ni « Changer de
+  personne ». Un compte FAMILLE dont UN profil échouait était **entièrement
+  bloqué** (seule la déconnexion restait), puisque la barre « Changer de
+  personne » n'existe que dans l'état `ready`. **Toute impasse d'interface doit
+  offrir une sortie.**
+
+- **Piège React attrapé au passage** : `setPrevStatus("idle")` suivi d'un appel
+  à `showPrevious()` ne fonctionne PAS — la fonction lit la valeur d'état de la
+  closure du rendu COURANT (encore `"error"`), et son garde-fou annule la
+  relance **en silence**. Correctif : paramètre explicite `showPrevious(force)`.
+  Corollaire immédiat : `onClick={showPrevious}` devient dangereux (React passe
+  l'objet événement en 1ᵉʳ argument → `force` truthy) → `onClick={() =>
+  showPrevious()}`.
+
+- **Le calendrier n'est pas une échéance.** La « bascule réelle du 1er août »
+  n'en est pas une : sans validation métier ni réplication production, il n'y a
+  rien à basculer ce jour-là. **Une date de procédure ne devient une échéance
+  que si le système est en service** — distinction rappelée par le métier, pas
+  par la technique.
+
+- **UTC partout** : `sp:rotate` horodate en UTC (suffixe `Z`) et Application
+  Insights stocke en UTC. Un écart de 2 h avec l'heure belge (été) est NORMAL,
+  pas un bug. L'UTC est volontaire pour la traçabilité (sans ambiguïté de
+  fuseau ni de passage heure d'été/hiver).
+
 ## 12. Prompt de relance (à coller au début de la prochaine conversation)
 
 > Bonjour Claude. Je poursuis le développement de ResidentApp (portail Fedasil
 > pour résidents, React + TypeScript + CSS pur, Azure Static Web Apps +
 > Functions). CONTEXTE : tout l'état du projet est dans
-> ETAT-PROJET-ResidentApp.md (**v8 du 13 juillet 2026**) dans les fichiers du
-> projet — lis-le d'abord, en particulier **§6.0 (volume de référence)**,
-> **§6.1 (index SharePoint)**, la section 5 « Règles métier » et la section 4
-> « Architecture Azure vs Entra ».
+> ETAT-PROJET-ResidentApp.md (**v9 du 13 juillet 2026, soir**) dans les
+> fichiers du projet — lis-le d'abord, en particulier **§5.20 (liste Soldes)**,
+> **§5.21 (liste Config)**, **§6.1 (index SharePoint — RÈGLE CORRIGÉE)** et
+> **§11ter (leçons)**.
 >
 > EN RÉSUMÉ : le parcours résident complet est validé en production
 > (authentification Entra personnalisée, matching par `oid`, sélecteur de
-> profils familiaux et aidants, formulaire minimal NN + e-mail + langue).
-> La liste permanente « Soldes » existe (§5.20, `npm run sp:soldes`), le
-> provisioning est déclaratif (`sharepoint-schema.json` + `sp:provision`), et la
-> bascule trimestrielle est outillée (PROCEDURE-BASCULE-TRIMESTRE.md +
-> `sp:rotate`) — **PREMIÈRE BASCULE RÉELLE T2 → T3 le 1er août 2026**.
+> profils familiaux et aidants). Le provisioning est déclaratif
+> (`sharepoint-schema.json` + `sp:provision`, qui sert AUSSI d'audit d'index),
+> la liste permanente « Soldes » existe (`sp:soldes`), et **la bascule
+> trimestrielle est désormais AUTOMATIQUE** : une liste SharePoint `Config`
+> (ligne `ActiveQuarter`) écrite par `sp:rotate` (confirmation `BASCULER`,
+> modes `--config-only` / `--annee=`) porte le trimestre actif ; `Me.ts` et
+> `Declare.ts` la lisent via `api/src/shared/quarterConfig.ts` (cache 5 min,
+> repli variables d'env). Plus aucune variable ni redéploiement à la clôture.
 >
-> NOUVEAU DEPUIS LE 13/7 :
-> * un **jeu de données de simulation complet** est en place sur le site de test
->   (`npm run sp:seed`, §7.4) : 1 845 résidents, ~14 800 déclarations, 20 113
->   lignes Soldes, 7 456 virements, + les **fixtures BCSS du module 5** dans
->   `simulation/` (5 CSV + clé de correction). Point fixe vérifié, purge
->   chirurgicale disponible ;
-> * **les index SharePoint sont posés** sur toutes les listes du site de test
->   (§6.1) et le header `HonorNonIndexedQueriesWarningMayFailRandomly` a été
->   RETIRÉ de `Me.ts` et `Declare.ts` (fail fast plutôt que fail random) ;
-> * le **volume réel est établi** : ~1 700 déclarations/mois observées, ~2 000
->   retenues pour le dimensionnement (§6.0) → une KB-Cumul franchit les 5 000
->   éléments au 3ᵉ mois de chaque trimestre, et KB-Paiements croît de ~24 000
->   lignes/an SANS jamais tourner (premier candidat SQL).
+> ⚠ RÈGLE À NE PAS OUBLIER (§6.1) : Graph refuse un `$filter` sur colonne NON
+> INDEXÉE **immédiatement**, même sur une petite liste — le seuil des 5 000
+> n'est pas la condition du refus. Toute colonne d'un filtre doit être indexée
+> (ou disparaître du filtre). Deux pannes de production l'ont démontré.
 >
-> ⚠ TOUT CE QUI PRÉCÈDE EST SUR LE SITE DE TEST (`Resident_Test`). Rien n'est
-> répliqué en production Fedasil : cela se fera après validation métier, et
-> **les index devront y être posés AVANT de déployer le code** (sinon le portail
-> casse immédiatement — §6.1).
+> ⚠ TOUT EST SUR LE SITE DE TEST (`Resident_Test`), avec un jeu de simulation
+> complet (~1 845 résidents, ~14 800 déclarations, 20 113 lignes Soldes,
+> `sp:seed`). Rien n'est répliqué en production Fedasil : cela se fera après
+> validation métier, et **les index devront y être posés AVANT de déployer le
+> code** (`sp:provision` les liste). La « bascule du 1er août » n'est PLUS une
+> échéance : sans mise en service, il n'y a rien à basculer (§10).
 >
-> OBJECTIF DE CETTE DISCUSSION — **chantier §10.0 : bascule automatique du
-> trimestre via une liste `Config`** (décidé et cadré le 13/7, non commencé) :
-> une liste SharePoint `Config` (trimestre actif + année), écrite par
-> `sp:rotate` À LA FIN de la rotation, lue par `Me.ts` / `Declare.ts` avec cache
-> mémoire et repli sur les variables d'environnement. Objectif : supprimer la
-> modification manuelle de `SP_CUMUL_LIST_NAME` / `SP_CUMUL_LIST_ID` à chaque
-> bascule (⚠ piège : l'ID est PRIORITAIRE sur le nom). Livrables attendus :
-> entrée dans `sharepoint-schema.json`, mise à jour de `scripts/rotate-quarter.ts`,
-> lecture dans `Me.ts` et `Declare.ts`, mise à jour de
-> PROCEDURE-BASCULE-TRIMESTRE.md.
-> ENSUITE (chantier §10.0bis, à NE PAS mélanger avec le précédent) : historique
-> multi-trimestres pour le résident (≥ 4 trimestres) — trimestre courant lu dans
-> KB-Cumul, trimestres antérieurs lus dans Soldes, + sélecteur dans
-> `Portail.tsx`.
+> OBJECTIF DE CETTE DISCUSSION — **chantier §10.0 (ex-10.0bis) : historique
+> multi-trimestres pour le résident** (cadré le 13/7, NON commencé) : le
+> résident doit voir **au moins les 4 derniers trimestres, courant compris**.
+> Architecture retenue : **trimestre courant → KB-Cumul** (fraîcheur immédiate),
+> **trimestres antérieurs → Soldes** (mémoire permanente, insensible aux
+> rotations). Touche `Me.ts` (lecture Soldes + liste des trimestres
+> disponibles) ET `Portail.tsx` (le bouton « trimestre précédent » devient un
+> sélecteur).
+> ⚠ AVANT DE CODER, on tranche ensemble : combien de trimestres exactement ?
+> Que fait-on des mois sans déclaration (absents de Soldes) ? Le paiement
+> reste-t-il possible sur un trimestre archivé ?
 >
 > Rappel de ma façon de travailler : je suis débutant confirmé, je préfère des
 > fichiers complets copier-coller prêts plutôt que des patchs, un pas-à-pas
 > pour les manipulations Azure/Entra/Power Platform, et je commite via
-> l'interface Git de VS Code (donne-moi juste les messages de commit). Avant
-> tout push : `npm run build` à la racine ET dans `api/`.
-> ⚠ Et une consigne née de deux erreurs répétées : **ouvre et lis les fichiers
-> concernés AVANT de recommander une réécriture** — ne suppose pas ce que
-> contient le code.
+> l'interface Git de VS Code (donne-moi juste les messages de commit, **en UN
+> SEUL commit**). Avant tout push : `npm run build` à la racine ET dans `api/`.
+> ⚠ Consigne née d'erreurs répétées : **ouvre et lis les fichiers concernés
+> AVANT de recommander une réécriture** — ne suppose pas ce que contient le
+> code, et ne fais pas confiance à ce que la doc affirme du code (deux fois
+> déjà, l'état projet décrivait des choses absentes des fichiers).
