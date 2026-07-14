@@ -9,49 +9,60 @@ import { getActiveQuarter } from "../shared/quarterConfig";
 // ============================================================================
 //  /api/me  —  Déclarations mensuelles du résident CONNECTÉ uniquement
 // ----------------------------------------------------------------------------
-//  RÉSOLUTION D'IDENTITÉ (nouvelle, robuste) :
-//    1) oid du jeton (claim objectidentifier, disponible grâce à l'auth
-//       personnalisée SWA) -> lignes de la liste "resident" (EntraOid).
-//    2) REPLI transitoire : si aucun oid stocké ne correspond, matching par
-//       e-mail — UNIQUEMENT si l'e-mail correspond à EXACTEMENT UNE ligne
-//       (jamais en cas d'ambiguïté familiale). En cas de succès, l'oid est
-//       écrit sur la ligne au passage (auto-réparation, non bloquant).
+//  RÉSOLUTION D'IDENTITÉ :
+//    1) oid du jeton (claim objectidentifier) -> liste "resident" (EntraOid).
+//    2) REPLI transitoire par e-mail si correspondance UNIQUE (auto-réparation
+//       de l'oid au passage, non bloquant).
 //
-//  FAMILLES (plusieurs personnes partagent le même e-mail = même compte
-//  invité = même oid, mais des FA différents) :
-//    - plusieurs lignes trouvées SANS paramètre fa
-//        -> 200 { needsProfile: true, profiles: [{fa, firstName, lastName}] }
-//        (le frontend affiche un sélecteur de profil)
-//    - GET /api/me?fa=FA00655210 : le serveur VÉRIFIE que ce FA appartient
-//      aux lignes liées à l'identité authentifiée (sinon 403). Le navigateur
-//      ne choisit que parmi SES profils, jamais librement.
+//  FAMILLES : plusieurs personnes partagent le même compte invité (même oid,
+//  FA différents) -> { needsProfile: true, profiles: [...] } ; le paramètre
+//  ?fa=<FA> est VÉRIFIÉ serveur (403 si le FA n'appartient pas à l'identité).
 //
-//  TRIMESTRE ACTIF (chantier §10.0, 13/7/2026) : le trimestre courant n'est
-//  PLUS câblé ici. Il est lu via getActiveQuarter() (module partagé
-//  ../shared/quarterConfig) : liste SharePoint « Config » écrite par
-//  « npm run sp:rotate » à la fin de chaque rotation, cache mémoire ~5 min,
-//  repli sur les variables d'environnement historiques si Config est
-//  illisible. La bascule trimestrielle ne demande plus NI modification de
-//  variable NI redéploiement — et le piège « SP_CUMUL_LIST_ID prime sur le
-//  nom » disparaît (ID et nom écrits ensemble par le même script).
+//  TRIMESTRE ACTIF (§10.0, 13/7/2026) : lu via getActiveQuarter()
+//  (liste SharePoint « Config », cache 5 min, repli variables d'env).
+//
+//  HISTORIQUE MULTI-TRIMESTRES (§10.0, 14/7/2026) — NOUVEAU :
+//    Le résident consulte une FENÊTRE DE 4 TRIMESTRES (courant compris) :
+//      - trimestre COURANT  -> lu dans KB-Cumul (là où l'on écrit : fraîcheur
+//        immédiate ; lire Soldes ferait disparaître une déclaration jusqu'à la
+//        prochaine synchro) ;
+//      - trimestres ANTÉRIEURS -> lus dans « Soldes » (mémoire permanente,
+//        insensible aux rotations, §5.20).
+//
+//    ⚠ POURQUOI EXACTEMENT 4 : la communication structurée encode le mois et
+//    le FA, mais PAS l'année (§5.12). Sur 4 trimestres glissants, chaque mois
+//    n'apparaît qu'UNE fois -> aucun paiement ambigu. Au 5e trimestre, avril
+//    2025 et avril 2026 porteraient la MÊME communication. La constante
+//    HISTORY_QUARTERS ne pourra augmenter qu'une fois l'année réglée dans la
+//    communication structurée.
+//
+//    ⚠ LECTURE DE SOLDES : $filter sur le SEUL FedasilNumber (colonne INDEXÉE,
+//    §5.20) ; l'année et le trimestre sont sélectionnés EN CODE. C'est la leçon
+//    de la panne du 13/7 sur Declare.ts (filtre sur la colonne Month non
+//    indexée -> 400 -> 500) : on SUPPRIME la dépendance à l'index au lieu de la
+//    satisfaire — un index de moins à créer, à vérifier, et à ne pas oublier
+//    lors de la réplication production.
 //
 //  Paramètres optionnels :
-//    ?quarter=previous  -> liste du trimestre précédent (inchangé)
-//    ?fa=<FA>           -> profil actif (obligatoire si plusieurs profils)
+//    ?fa=<FA>                  -> profil actif (obligatoire si plusieurs)
+//    ?quarter=<1-4>&year=<AAAA>-> trimestre demandé (DOIT être dans la fenêtre)
+//    ?quarter=previous         -> alias historique (trimestre précédent)
 //
 //  Réponse 200 (profil résolu) :
 //    {
-//      quarter: 4 | 3 | null,
+//      quarter: 1..4 | null,
+//      year: number | null,
+//      archived: boolean,                 // true = lu dans Soldes
+//      quarters: [ { quarter, year } ],   // fenêtre, du + récent au + ancien
 //      months: [ { month, netSalary, grossSalary, contribution, paid,
-//                  structuredCom }, ... ],       // trié mois décroissant
+//                  structuredCom } ],     // trié mois décroissant
 //      payment: { iban, beneficiary } | null,
-//      profile: { fa, firstName, lastName },     // profil actif
-//      profiles: [ ... ]                         // présent si plusieurs
+//      profile: { fa, firstName, lastName },
+//      profiles: [ ... ]                  // présent si plusieurs
 //    }
 //
 //  Sécurité :
-//   - L'identité vient du jeton Static Web Apps (x-ms-client-principal),
-//     JAMAIS d'un paramètre du navigateur.
+//   - Identité issue du jeton Static Web Apps (x-ms-client-principal) UNIQUEMENT.
 //   - Le FedasilNumber actif est résolu/contrôlé ICI.
 //   - Aucune valeur sensible (montant, FA, NN) dans les logs.
 // ============================================================================
@@ -76,9 +87,8 @@ const SP_FIRSTNAME_FIELD = process.env["SP_FIRSTNAME_FIELD"] ?? "FirstName";
 const SP_LASTNAME_FIELD = process.env["SP_LASTNAME_FIELD"] ?? "LastName";
 
 // Étape 2 : listes KB-Cumul (une liste PAR trimestre).
-// NB (13/7/2026, §10.0) : SP_CUMUL_LIST_NAME / SP_CUMUL_LIST_ID /
-// SP_CUMUL_PREV_LIST_NAME ne sont PLUS lues ici : elles servent de REPLI
-// dans ../shared/quarterConfig si la liste « Config » est illisible.
+// NB (§10.0) : SP_CUMUL_LIST_NAME / SP_CUMUL_LIST_ID / SP_CUMUL_PREV_LIST_NAME
+// ne sont PLUS lues ici : elles servent de REPLI dans ../shared/quarterConfig.
 
 // Noms INTERNES des colonnes dans les listes KB-Cumul
 const SP_CUMUL_FA_FIELD = process.env["SP_CUMUL_FA_FIELD"] ?? "FedasilNumber";
@@ -90,6 +100,18 @@ const SP_PAID_FIELD = process.env["SP_PAID_FIELD"] ?? "Paid";
 const SP_STRUCTCOM_FIELD =
   process.env["SP_STRUCTCOM_FIELD"] ?? "StructuredCom";
 
+// Étape 2bis (NOUVEAU) : liste « Soldes » — mémoire permanente (§5.20).
+// Résolue par NOM par défaut (aucune variable à créer) ; un ID peut être
+// fourni pour économiser la résolution.
+const SP_SOLDES_LIST_NAME = process.env["SP_SOLDES_LIST_NAME"] ?? "Soldes";
+const SP_SOLDES_LIST_ID = process.env["SP_SOLDES_LIST_ID"]; // optionnel
+
+// Noms INTERNES des colonnes de la liste Soldes (§5.20).
+const SP_SOLDES_FA_FIELD =
+  process.env["SP_SOLDES_FA_FIELD"] ?? "FedasilNumber";
+const SP_SOLDES_YEAR_FIELD = process.env["SP_SOLDES_YEAR_FIELD"] ?? "Year";
+const SP_SOLDES_MONTH_FIELD = process.env["SP_SOLDES_MONTH_FIELD"] ?? "Month";
+
 // --- Paiement (affiché sur le portail ; si absent, la section paiement
 // n'apparaît tout simplement pas côté frontend) ---
 const PAYMENT_IBAN = process.env["PAYMENT_IBAN"] ?? "";
@@ -98,6 +120,10 @@ const PAYMENT_BENEFICIARY = process.env["PAYMENT_BENEFICIARY"] ?? "";
 // FedasilNumber est-il une colonne de type Nombre dans SharePoint ?
 const SP_FA_IS_NUMBER =
   (process.env["SP_FA_IS_NUMBER"] ?? "false").toLowerCase() === "true";
+
+// ⚠ Fenêtre d'historique. NE PAS AUGMENTER sans avoir d'abord réglé l'année
+// dans la communication structurée (§5.12) : voir l'en-tête de ce fichier.
+const HISTORY_QUARTERS = 4;
 
 const GENERIC_SERVER_ERROR =
   "Une erreur est survenue lors du chargement de vos informations.";
@@ -136,6 +162,12 @@ type ResidentProfile = {
   lastName: string;
 };
 
+/** Un trimestre de la fenêtre d'historique. */
+type QuarterRef = {
+  quarter: number;
+  year: number;
+};
+
 type SpFields = Record<string, unknown>;
 
 // ---------- Helpers ----------
@@ -165,12 +197,10 @@ const GUID_RE =
 
 // Extrait l'oid Entra du principal.
 // IMPORTANT : avec l'auth personnalisée SWA, le header x-ms-client-principal
-// transmis à la fonction ne contient PAS toujours le tableau `claims` détaillé
-// (celui-ci n'est visible que sur /.auth/me côté navigateur). En revanche,
-// `userId` EST l'oid pour le fournisseur AAD. On lit donc, dans l'ordre :
+// transmis à la fonction ne contient PAS toujours le tableau `claims` détaillé.
+// En revanche, `userId` EST l'oid pour le fournisseur AAD. On lit donc :
 //   1) le claim objectidentifier s'il est présent ;
 //   2) sinon userId (oid AAD), validé comme GUID.
-// En local (simulateur SWA), userId n'est pas un GUID -> null -> repli e-mail.
 function getOid(principal: ClientPrincipal): string | null {
   const claim = principal.claims?.find(
     (c) =>
@@ -192,6 +222,28 @@ function toNumberOrNull(v: unknown): number | null {
   if (v === undefined || v === null || v === "") return null;
   const n = typeof v === "number" ? v : Number(String(v).replace(",", "."));
   return Number.isFinite(n) ? n : null;
+}
+
+// Trimestre d'un mois (1-12) : 1..3 -> 1, 4..6 -> 2, etc.
+function quarterOfMonth(month: number): number {
+  return Math.ceil(month / 3);
+}
+
+// Trimestre précédent, avec bouclage d'année (T1 2026 -> T4 2025).
+function previousQuarter(ref: QuarterRef): QuarterRef {
+  return ref.quarter === 1
+    ? { quarter: 4, year: ref.year - 1 }
+    : { quarter: ref.quarter - 1, year: ref.year };
+}
+
+// Fenêtre d'historique : le trimestre courant puis les précédents,
+// du plus récent au plus ancien.
+function buildWindow(current: QuarterRef, size: number): QuarterRef[] {
+  const window: QuarterRef[] = [current];
+  for (let i = 1; i < size; i++) {
+    window.push(previousQuarter(window[i - 1]));
+  }
+  return window;
 }
 
 // ---------- Token Graph ----------
@@ -239,8 +291,9 @@ async function getSiteId(
 }
 
 // Retrouve l'ID d'une liste par son nom d'affichage.
-// Renvoie null si la liste n'existe pas (cas normal pour le trimestre
-// précédent en tout début d'année, par exemple).
+// Renvoie null si la liste n'existe pas.
+// NB : ce $filter porte sur displayName du point de terminaison /lists (les
+// listes elles-mêmes, pas leurs éléments) : aucun enjeu d'index ni de seuil.
 async function findListIdByName(
   siteId: string,
   displayName: string,
@@ -255,7 +308,7 @@ async function findListIdByName(
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) {
-    context.log("Erreur résolution liste KB-Cumul, statut:", res.status);
+    context.log("Erreur résolution de liste, statut:", res.status);
     throw new Error("Impossible de retrouver la liste des déclarations.");
   }
   const json = (await res.json()) as { value?: Array<{ id: string }> };
@@ -273,21 +326,25 @@ function buildFilter(field: string, value: string, isNumber: boolean): string {
 
 // Renvoie id + fields de TOUS les éléments correspondants.
 //
-// ⚠ PRÉREQUIS D'INDEXATION (13/7/2026) : ce $filter s'appuie sur des colonnes
-// SharePoint INDEXÉES (Residents List : EntraOid, FedasilNumber, Title ;
-// KB-Cumul : FedasilNumber). Le header « Prefer:
-// HonorNonIndexedQueriesWarningMayFailRandomly » a été RETIRÉ : il autorisait
-// le filtrage sur colonnes NON indexées, au prix d'un échec ALÉATOIRE dès que
-// la liste dépasse 5000 éléments — soit, à ~1700 déclarations/mois, le 3e mois
-// de CHAQUE trimestre, exactement quand les résidents déclarent le plus.
-// Sans ce header, une colonne non indexée fait échouer la requête TOUT DE
-// SUITE et pour tout le monde (panne franche, diagnostiquable) au lieu de
-// tomber au hasard en production. Fail fast plutôt que fail random.
+// ⚠ PRÉREQUIS D'INDEXATION (§6.1, RÈGLE CORRIGÉE le 13/7/2026) : Graph refuse
+// un $filter sur colonne NON INDEXÉE IMMÉDIATEMENT (400), quelle que soit la
+// taille de la liste — le seuil des 5000 n'est PAS la condition du refus.
+// TOUTE colonne apparaissant dans un $filter doit donc être indexée, ou ne pas
+// apparaître dans le filtre. Colonnes indexées utilisées ici :
+//   Residents List : EntraOid, FedasilNumber, Title
+//   KB-Cumul       : FedasilNumber
+//   Soldes         : FedasilNumber
+// Le header « Prefer: HonorNonIndexedQueriesWarningMayFailRandomly » a été
+// RETIRÉ le 13/7 : fail fast plutôt que fail random.
 //
 // ⚠ DÉPLOIEMENT : poser les index sur les listes AVANT de déployer ce code.
 // Dans l'autre ordre, le portail casse immédiatement pour tous les résidents.
-// Rappel : un index ne peut être créé que si la liste compte MOINS de 5000
-// éléments (donc, pour une KB-Cumul, juste après la rotation trimestrielle).
+//
+// PAGINATION (14/7/2026, §10.0) : la lecture suit désormais @odata.nextLink.
+// Indispensable pour la liste Soldes : un résident y accumule ~12 lignes par
+// an, ce qui aurait dépassé l'ancien $top=50 dès la 5e année — et TRONQUÉ
+// silencieusement son historique. Sans effet sur KB-Cumul (<= 3 lignes par
+// résident et par trimestre).
 async function queryItems(
   siteId: string,
   listId: string,
@@ -296,35 +353,49 @@ async function queryItems(
   token: string,
   context: InvocationContext
 ): Promise<Array<{ id: string; fields: SpFields }>> {
-  const url =
+  const out: Array<{ id: string; fields: SpFields }> = [];
+
+  let url: string | null =
     `https://graph.microsoft.com/v1.0/sites/${siteId}/lists/${listId}` +
     `/items?$expand=fields($select=${selectFields.join(",")})` +
-    `&$filter=${filterClause}&$top=50`;
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) {
-    // Le seuil de vue de liste (5000) renvoie typiquement 400/403/503 : on le
-    // signale explicitement pour ne PLUS jamais chercher pendant des heures.
-    if (res.status === 400 || res.status === 403 || res.status === 503) {
-      context.log(
-        `Erreur lecture liste (/api/me), statut: ${res.status} — CAUSE PROBABLE : ` +
-          `colonne de filtre NON INDEXÉE sur une liste de plus de 5000 éléments. ` +
-          `Vérifier les index SharePoint (Paramètres de la liste > Colonnes indexées).`
-      );
-    } else {
-      context.log("Erreur lecture liste (/api/me), statut:", res.status);
+    `&$filter=${filterClause}&$top=200`;
+
+  // Garde-fou : jamais de boucle infinie sur une pagination anormale.
+  const MAX_PAGES = 25;
+
+  for (let page = 0; page < MAX_PAGES && url; page++) {
+    const res: Response = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      // Une colonne de filtre non indexée renvoie typiquement 400/403/503 :
+      // on le signale explicitement pour ne PLUS jamais chercher des heures.
+      if (res.status === 400 || res.status === 403 || res.status === 503) {
+        context.log(
+          `Erreur lecture liste (/api/me), statut: ${res.status} — CAUSE PROBABLE : ` +
+            `colonne de filtre NON INDEXÉE (Graph refuse le $filter immédiatement, ` +
+            `même sur une petite liste). Vérifier les index SharePoint ` +
+            `(Paramètres de la liste > Colonnes indexées) — « npm run sp:provision » les liste.`
+        );
+      } else {
+        context.log("Erreur lecture liste (/api/me), statut:", res.status);
+      }
+      throw new Error("Impossible de lire les données.");
     }
-    throw new Error("Impossible de lire les données.");
+
+    const json = (await res.json()) as {
+      value?: Array<{ id?: string; fields?: SpFields }>;
+      "@odata.nextLink"?: string;
+    };
+
+    for (const it of json.value ?? []) {
+      if (it.id && it.fields) out.push({ id: it.id, fields: it.fields });
+    }
+
+    url = json["@odata.nextLink"] ?? null;
   }
-  const json = (await res.json()) as {
-    value?: Array<{ id?: string; fields?: SpFields }>;
-  };
-  return (json.value ?? [])
-    .filter((it): it is { id: string; fields: SpFields } =>
-      Boolean(it.id && it.fields)
-    )
-    .map((it) => ({ id: it.id, fields: it.fields }));
+
+  return out;
 }
 
 // ---------- Résolution d'identité (liste resident) ----------
@@ -462,6 +533,116 @@ async function resolveProfiles(
   };
 }
 
+// ---------- Lecture des déclarations ----------
+
+// Transforme un lot de lignes (KB-Cumul OU Soldes) en déclarations mensuelles,
+// triées du mois le plus récent au plus ancien.
+// `keepMonth` permet de ne garder que les mois d'un trimestre donné (Soldes
+// contient TOUS les mois de TOUTES les années d'un résident).
+function toMonths(
+  rows: Array<{ fields: SpFields }>,
+  monthField: string,
+  keepMonth: (month: number, fields: SpFields) => boolean
+): MonthlyDeclaration[] {
+  // Une entrée par mois. (En cas de doublon improbable, la dernière ligne lue
+  // gagne — comportement inchangé.)
+  const byMonth = new Map<number, MonthlyDeclaration>();
+
+  for (const { fields: f } of rows) {
+    const month = toNumberOrNull(f[monthField]);
+    if (month === null || month < 1 || month > 12) continue;
+    if (!keepMonth(month, f)) continue;
+
+    const rawCom = f[SP_STRUCTCOM_FIELD];
+    byMonth.set(month, {
+      month,
+      netSalary: toNumberOrNull(f[SP_NET_FIELD]),
+      grossSalary: toNumberOrNull(f[SP_GROSS_FIELD]),
+      contribution: toNumberOrNull(f[SP_CONTRIB_FIELD]),
+      paid: toNumberOrNull(f[SP_PAID_FIELD]),
+      structuredCom:
+        typeof rawCom === "string" && rawCom.trim() !== ""
+          ? rawCom.trim()
+          : null,
+    });
+  }
+
+  return [...byMonth.values()].sort((a, b) => b.month - a.month);
+}
+
+// Trimestre COURANT -> KB-Cumul (source d'écriture : fraîcheur immédiate).
+async function readCurrentQuarter(
+  siteId: string,
+  listId: string,
+  fedasilNumber: string,
+  token: string,
+  context: InvocationContext
+): Promise<MonthlyDeclaration[]> {
+  const rows = await queryItems(
+    siteId,
+    listId,
+    buildFilter(SP_CUMUL_FA_FIELD, fedasilNumber, SP_FA_IS_NUMBER),
+    [
+      SP_MONTH_FIELD,
+      SP_NET_FIELD,
+      SP_GROSS_FIELD,
+      SP_CONTRIB_FIELD,
+      SP_PAID_FIELD,
+      SP_STRUCTCOM_FIELD,
+    ],
+    token,
+    context
+  );
+  // Une liste KB-Cumul ne contient QUE son trimestre : aucun tri à faire.
+  return toMonths(rows, SP_MONTH_FIELD, () => true);
+}
+
+// Trimestre ARCHIVÉ -> Soldes (mémoire permanente, §5.20).
+//
+// ⚠ Le $filter porte sur le SEUL FedasilNumber (colonne indexée). L'année et
+// le trimestre sont sélectionnés EN CODE : Year et Quarter sont pourtant
+// indexées, mais chaque colonne ajoutée à un filtre est un index de plus à ne
+// pas oublier de poser sur le tenant Fedasil — et un $filter composé de plus à
+// voir tomber en 400. Le volume ne le justifie pas : un résident a ~12 lignes
+// Soldes par an. On supprime la dépendance au lieu de la satisfaire (§11ter).
+async function readArchivedQuarter(
+  siteId: string,
+  soldesListId: string,
+  fedasilNumber: string,
+  ref: QuarterRef,
+  token: string,
+  context: InvocationContext
+): Promise<MonthlyDeclaration[]> {
+  const rows = await queryItems(
+    siteId,
+    soldesListId,
+    buildFilter(SP_SOLDES_FA_FIELD, fedasilNumber, SP_FA_IS_NUMBER),
+    [
+      SP_SOLDES_YEAR_FIELD,
+      SP_SOLDES_MONTH_FIELD,
+      SP_NET_FIELD,
+      SP_GROSS_FIELD,
+      SP_CONTRIB_FIELD,
+      SP_PAID_FIELD,
+      SP_STRUCTCOM_FIELD,
+    ],
+    token,
+    context
+  );
+
+  context.log(
+    `Soldes : ${rows.length} ligne(s) lue(s) pour ce profil ; ` +
+      `sélection en code de T${ref.quarter} ${ref.year}.`
+  );
+
+  // Le trimestre est DÉRIVÉ du mois (et non lu dans la colonne Quarter) :
+  // une colonne de moins dont dépendre.
+  return toMonths(rows, SP_SOLDES_MONTH_FIELD, (month, f) => {
+    const year = toNumberOrNull(f[SP_SOLDES_YEAR_FIELD]);
+    return year === ref.year && quarterOfMonth(month) === ref.quarter;
+  });
+}
+
 // ---------- Endpoint ----------
 
 export async function Me(
@@ -484,13 +665,14 @@ export async function Me(
     }
 
     // Paramètres strictement bornés.
-    const wantPrevious = request.query.get("quarter") === "previous";
+    const quarterParam = (request.query.get("quarter") ?? "").trim();
+    const yearParam = (request.query.get("year") ?? "").trim();
     const faParam = (request.query.get("fa") ?? "").trim();
 
     context.log(
       `Requête /api/me pour: ${maskEmail(email)} (oid=${
         oid ? "présent" : "absent"
-      }, quarter=${wantPrevious ? "previous" : "current"})`
+      }, quarter=${quarterParam || "current"}${yearParam ? `/${yearParam}` : ""})`
     );
 
     const token = await getGraphToken(context);
@@ -525,27 +707,6 @@ export async function Me(
     }
     const fedasilNumber = active.fa;
 
-    // --- Étape 2 : trimestre actif -> déclarations du trimestre demandé ---
-    // §10.0 (13/7/2026) : le trimestre actif est lu dans la liste « Config »
-    // (écrite par sp:rotate, cache mémoire ~5 min, repli variables d'env).
-    const activeQuarter = await getActiveQuarter(siteId, token, context);
-    const listName = wantPrevious
-      ? activeQuarter.prevListName
-      : activeQuarter.listName;
-    const quarter = wantPrevious
-      ? activeQuarter.prevQuarter
-      : activeQuarter.quarter;
-
-    // Trimestre en cours : l'ID écrit dans Config (ou, en repli, la variable
-    // SP_CUMUL_LIST_ID) évite une résolution par nom. Le trimestre précédent
-    // est TOUJOURS résolu par nom (aucun ID stocké pour lui — inchangé).
-    let cumulListId: string | null = !wantPrevious
-      ? activeQuarter.listId
-      : null;
-    if (!cumulListId) {
-      cumulListId = await findListIdByName(siteId, listName, token, context);
-    }
-
     const profileBlock = {
       fa: active.fa,
       firstName: active.firstName,
@@ -553,56 +714,63 @@ export async function Me(
     };
     const profilesBlock = profiles.length > 1 ? publicProfiles : undefined;
 
-    // Liste introuvable : réponse vide (le frontend affichera l'état adapté).
-    if (!cumulListId) {
-      context.log("Liste de trimestre introuvable (réponse vide).");
-      return {
-        status: 200,
-        jsonBody: {
-          quarter,
-          months: [],
-          profile: profileBlock,
-          profiles: profilesBlock,
-        },
-      };
+    // --- Étape 2 : trimestre actif (liste « Config », §5.21) ---
+    const activeQuarter = await getActiveQuarter(siteId, token, context);
+
+    // Cas dégradé : en REPLI sur les variables d'environnement, l'année n'est
+    // pas portée (et le trimestre peut l'être mal si le nom de liste est
+    // atypique). On sert alors le trimestre courant SEUL, sans historique :
+    // mieux vaut une fenêtre absente qu'une fenêtre fausse.
+    if (activeQuarter.quarter === null) {
+      context.log(
+        "⚠ Trimestre actif inconnu (repli) : historique multi-trimestres désactivé."
+      );
+    }
+    const currentYear =
+      activeQuarter.year ??
+      (activeQuarter.quarter !== null
+        ? new Date().getUTCFullYear() // repli : l'année civile est correcte aux 4 dates de bascule (§5.16)
+        : null);
+
+    const currentRef: QuarterRef | null =
+      activeQuarter.quarter !== null && currentYear !== null
+        ? { quarter: activeQuarter.quarter, year: currentYear }
+        : null;
+
+    const windowRefs: QuarterRef[] = currentRef
+      ? buildWindow(currentRef, HISTORY_QUARTERS)
+      : [];
+
+    // --- Étape 3 : quel trimestre est demandé ? ---
+    // Par défaut : le courant. « previous » = alias historique (compatibilité
+    // avec l'ancien frontend). Sinon : quarter=<1-4>&year=<AAAA>, qui DOIT
+    // appartenir à la fenêtre (sinon 400 : on ne sert pas hors fenêtre).
+    let requested: QuarterRef | null = currentRef;
+
+    if (quarterParam === "previous") {
+      requested = windowRefs[1] ?? null;
+    } else if (quarterParam !== "" && quarterParam !== "current") {
+      const q = Number(quarterParam);
+      const y = Number(yearParam);
+      const inWindow =
+        Number.isInteger(q) &&
+        Number.isInteger(y) &&
+        windowRefs.find((w) => w.quarter === q && w.year === y);
+      if (!inWindow) {
+        context.log("Trimestre demandé hors fenêtre d'historique : refusé.");
+        return {
+          status: 400,
+          jsonBody: { message: "Trimestre non disponible." },
+        };
+      }
+      requested = inWindow;
     }
 
-    const rows = await queryItems(
-      siteId,
-      cumulListId,
-      buildFilter(SP_CUMUL_FA_FIELD, fedasilNumber, SP_FA_IS_NUMBER),
-      [
-        SP_MONTH_FIELD,
-        SP_NET_FIELD,
-        SP_GROSS_FIELD,
-        SP_CONTRIB_FIELD,
-        SP_PAID_FIELD,
-        SP_STRUCTCOM_FIELD,
-      ],
-      token,
-      context
-    );
-
-    // Une entrée par mois, triée du plus récent au plus ancien.
-    // (En cas de doublon improbable sur un mois, la dernière ligne lue gagne.)
-    const byMonth = new Map<number, MonthlyDeclaration>();
-    for (const { fields: f } of rows) {
-      const month = toNumberOrNull(f[SP_MONTH_FIELD]);
-      if (month === null) continue;
-      const rawCom = f[SP_STRUCTCOM_FIELD];
-      byMonth.set(month, {
-        month,
-        netSalary: toNumberOrNull(f[SP_NET_FIELD]),
-        grossSalary: toNumberOrNull(f[SP_GROSS_FIELD]),
-        contribution: toNumberOrNull(f[SP_CONTRIB_FIELD]),
-        paid: toNumberOrNull(f[SP_PAID_FIELD]),
-        structuredCom:
-          typeof rawCom === "string" && rawCom.trim() !== ""
-            ? rawCom.trim()
-            : null,
-      });
-    }
-    const months = [...byMonth.values()].sort((a, b) => b.month - a.month);
+    // Fenêtre publiée au frontend (le sélecteur se construit avec ça).
+    const quartersBlock = windowRefs.map(({ quarter, year }) => ({
+      quarter,
+      year,
+    }));
 
     // Configuration de paiement (IBAN institutionnel + bénéficiaire).
     // Absente ou incomplète -> null : le portail masque la section paiement.
@@ -611,15 +779,84 @@ export async function Me(
         ? { iban: PAYMENT_IBAN, beneficiary: PAYMENT_BENEFICIARY }
         : null;
 
+    // Réponse "vide" réutilisable (liste introuvable, trimestre inconnu…).
+    const emptyBody = (ref: QuarterRef | null, archived: boolean) => ({
+      quarter: ref?.quarter ?? null,
+      year: ref?.year ?? null,
+      archived,
+      quarters: quartersBlock,
+      months: [] as MonthlyDeclaration[],
+      payment,
+      profile: profileBlock,
+      profiles: profilesBlock,
+    });
+
+    if (!requested) {
+      return { status: 200, jsonBody: emptyBody(null, false) };
+    }
+
+    const isCurrent =
+      currentRef !== null &&
+      requested.quarter === currentRef.quarter &&
+      requested.year === currentRef.year;
+
+    // --- Étape 4a : trimestre COURANT -> KB-Cumul ---
+    if (isCurrent) {
+      // L'ID écrit dans Config (ou, en repli, SP_CUMUL_LIST_ID) évite une
+      // résolution par nom.
+      const cumulListId =
+        activeQuarter.listId ??
+        (await findListIdByName(
+          siteId,
+          activeQuarter.listName,
+          token,
+          context
+        ));
+
+      if (!cumulListId) {
+        context.log("Liste KB-Cumul du trimestre courant introuvable.");
+        return { status: 200, jsonBody: emptyBody(requested, false) };
+      }
+
+      const months = await readCurrentQuarter(
+        siteId,
+        cumulListId,
+        fedasilNumber,
+        token,
+        context
+      );
+
+      return {
+        status: 200,
+        jsonBody: { ...emptyBody(requested, false), months },
+      };
+    }
+
+    // --- Étape 4b : trimestre ARCHIVÉ -> Soldes (§5.20) ---
+    const soldesListId =
+      SP_SOLDES_LIST_ID?.trim() ||
+      (await findListIdByName(siteId, SP_SOLDES_LIST_NAME, token, context));
+
+    if (!soldesListId) {
+      context.log(
+        `⚠ Liste « ${SP_SOLDES_LIST_NAME} » introuvable : historique archivé indisponible ` +
+          `(lancer « npm run sp:provision » puis « npm run sp:soldes »).`
+      );
+      return { status: 200, jsonBody: emptyBody(requested, true) };
+    }
+
+    const months = await readArchivedQuarter(
+      siteId,
+      soldesListId,
+      fedasilNumber,
+      requested,
+      token,
+      context
+    );
+
     return {
       status: 200,
-      jsonBody: {
-        quarter,
-        months,
-        payment,
-        profile: profileBlock,
-        profiles: profilesBlock,
-      },
+      jsonBody: { ...emptyBody(requested, true), months },
     };
   } catch (error) {
     context.log("Erreur dans /api/me:", error);

@@ -1188,3 +1188,48 @@ button.data-tile .tile-arrow {
 .quarter-row .q-check.q-status-overdue {
   color: var(--rouge-fonce);
 }
+
+/* =============================================================================
+   SÉLECTEUR DE TRIMESTRES (chantier §10.0 — historique multi-trimestres)
+   -----------------------------------------------------------------------------
+   À AJOUTER À LA FIN de src/styles/fedasil.css.
+   AJOUT PUR : aucune règle existante n'est modifiée. Toutes les autres classes
+   utilisées par le portail (.pay-anchor, .alert-retry, .q-status-*, .btn-tile,
+   .tile-arrow, .data-tile.partial/.overdue, .header-actions…) existent déjà.
+
+   Vocabulaire visuel repris de .lang-switch (charte Fedasil : le violet #644391
+   est réservé aux éléments interactifs ; jamais de rouge décoratif).
+   ============================================================================= */
+
+.quarter-switch {
+  display: flex;
+  flex-wrap: wrap;          /* mobile : les 4 pilules passent à la ligne */
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.quarter-switch button {
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 8px 14px;
+  min-height: 40px;         /* cible tactile confortable */
+  flex: 1 1 auto;
+  border-radius: var(--radius-pilule);
+  border: 1.5px solid var(--violet-25);
+  background: var(--blanc);
+  color: var(--gris);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.quarter-switch button:hover {
+  border-color: var(--violet-50);
+}
+
+.quarter-switch button[aria-pressed="true"] {
+  background: var(--violet);
+  border-color: var(--violet);
+  color: var(--blanc);
+}
