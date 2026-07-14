@@ -1,6 +1,8 @@
 # ÉTAT DU PROJET — ResidentApp (Fedasil)
 
-**Version 9 — 13 juillet 2026 (soir)** (remplace la v8 du même jour — session « bascule automatique du trimestre : liste Config »)
+**Version 10 — 14 juillet 2026** (remplace la v9 du 13 juillet au soir — session
+« historique multi-trimestres pour le résident », et **restauration de la session
+v6 effacée par erreur** — voir §11quater)
 
 ---
 
@@ -450,6 +452,27 @@ et renvoyer moins de 5000 lignes (filtres composés — discipline « 5000 »,
 CONCEPTION-STAFF-APP §6). Volumétrie constatée : ~2000 lignes/trimestre
 (données de test T4), soit ~8000/an.
 
+#### 5.20.1 Cadence de synchronisation (décidée le 14/7/2026)
+
+`Soldes` est alimentée par `sp:soldes`, lancé **manuellement**. Depuis que le
+résident consulte ses trimestres antérieurs DANS Soldes (§5.22), cette cadence
+n'est plus un détail d'exploitation : **c'est elle qui détermine la fraîcheur des
+soldes affichés sur les trimestres clôturés**.
+
+**Le risque, concrètement** : un résident paie en août sa dette d'avril. Le
+lettrage (manuel) écrit le montant dans KB-Cumul T2. Le portail, lui, lit T2 dans
+Soldes — et continue d'afficher « impayé » jusqu'à la prochaine synchro. On
+invite donc à payer une dette déjà réglée : appels au centre, perte de confiance.
+
+**Décision** : `sp:soldes` est lancé **au minimum une fois par semaine**, calé sur
+le rythme du lettrage manuel. **Cible** : exécution nocturne automatique (Power
+Automate ou timer trigger Azure Function), à mettre en place avant la mise en
+service réelle.
+
+⚠ Ce besoin n'est PAS créé par le chantier §10.0 : le module « rappels » de l'app
+staff lira Soldes lui aussi, et des rappels calculés sur des données périmées
+seraient bien plus graves qu'un affichage périmé.
+
 ### 5.21 Liste « Config » — trimestre actif de l'application (créée le 13/7/2026)
 
 Chantier §10.0. Liste permanente, **une ligne par clé de configuration**
@@ -477,6 +500,92 @@ Chantier §10.0. Liste permanente, **une ligne par clé de configuration**
 - ⚠ **Ne jamais éditer la ligne à la main** (sauf urgence) : passer par
   `sp:rotate --config-only`. `Quarter` (1-4) et `Year` sont validés à la
   lecture ; une ligne invalide déclenche le repli.
+
+### 5.22 Historique multi-trimestres pour le résident (14/7/2026)
+
+Chantier §10.0. Le résident consulte une **fenêtre glissante de 4 trimestres,
+courant compris**.
+
+**Architecture — deux sources, une raison chacune :**
+
+| Trimestre | Source | Pourquoi |
+|---|---|---|
+| **Courant** | KB-Cumul (via `Config`) | C'est là qu'on **écrit** : fraîcheur immédiate. Lire Soldes ferait disparaître une déclaration jusqu'à la prochaine synchro. |
+| **Antérieurs (3)** | Liste `Soldes` | **Mémoire permanente**, insensible aux rotations. Porte l'année explicitement. |
+
+#### Décision 1 — pourquoi EXACTEMENT 4 trimestres
+
+Ce n'est pas un choix d'ergonomie, c'est une **contrainte de lettrage**.
+
+La communication structurée encode le **mois** et le **FA**, mais **PAS l'année**
+(§5.12). Sur 4 trimestres glissants, les 12 mois distincts n'apparaissent
+**qu'une seule fois chacun** → aucun paiement ambigu. Dès le 5ᵉ trimestre, avril
+2025 et avril 2026 porteraient la **même communication** : un virement depuis le
+portail deviendrait impossible à imputer.
+
+👉 La constante `HISTORY_QUARTERS` (`Me.ts`) **ne pourra augmenter qu'une fois
+l'année réglée dans la communication structurée**. Le commentaire du code le dit.
+
+#### Décision 2 — mois sans déclaration dans un trimestre clôturé
+
+**Affichés, en gris, non cliquables** (« pas de déclaration », sans le « + »).
+
+- Pas de **rouge** : un mois sans déclaration n'est pas une faute (pas de revenus
+  = pas de déclaration). Le rouge reste réservé aux vraies alertes (charte :
+  risque d'anxiété pour un public vulnérable).
+- Pas de **silence** : les masquer laisserait croire que la photo du trimestre est
+  complète.
+- Pas de **« + »** : `Declare.ts` borne l'écriture au trimestre en cours. La
+  déclaration rétroactive est un processus de contrôle **staff** (BCSS, mises en
+  demeure), pas un geste du portail.
+
+#### Décision 3 — le paiement reste OUVERT sur un trimestre clôturé
+
+Une dette ancienne **reste payable** depuis le portail : `Soldes` conserve
+`Contribution`, `Paid` et surtout la **communication structurée d'origine**
+(`StructuredCom`) — le QR EPC est donc reconstitué à l'identique.
+
+Bloquer le paiement serait contre-productif : le module « rappels » de l'app staff
+va précisément courir après ces impayés. Autant laisser payer qui veut payer. La
+fenêtre de 4 trimestres (décision 1) garantit que la communication reste non
+ambiguë.
+
+**En résumé, sur un trimestre clôturé** : consultation ✅ · paiement ✅ ·
+déclaration ❌ · correction ❌.
+
+#### Décision 4 — cadence `sp:soldes`
+
+Voir §5.20.1 : hebdomadaire au minimum, nocturne à terme. Sans cela, un paiement
+tardif reste invisible sur les trimestres archivés.
+
+#### Implémentation
+
+**`Me.ts`**
+- Paramètres : `?quarter=<1-4>&year=<AAAA>` — le trimestre demandé **doit**
+  appartenir à la fenêtre, sinon **400** (on ne sert jamais hors fenêtre).
+  `?quarter=previous` conservé comme alias de compatibilité.
+- Réponse enrichie : `year`, `archived` (bool) et `quarters: [{quarter, year}]` —
+  **la fenêtre est décidée par le SERVEUR** ; le frontend ne la calcule jamais.
+- ⚠ **Lecture de Soldes : `$filter` sur le SEUL `FedasilNumber`** (colonne
+  indexée). L'année et le trimestre sont **sélectionnés EN CODE**. `Year` et
+  `Quarter` sont pourtant indexées — mais chaque colonne ajoutée à un filtre est
+  un index de plus à ne pas oublier de poser sur le tenant Fedasil, et un
+  `$filter` composé de plus à voir tomber en 400. Le volume ne le justifie pas
+  (~12 lignes par résident et par an). **On supprime la dépendance à l'index
+  plutôt que de la satisfaire.**
+- **Pagination `@odata.nextLink`** ajoutée à `queryItems` : un résident accumule
+  ~12 lignes Soldes par an, ce qui aurait dépassé l'ancien `$top=50` dès la
+  5ᵉ année — et **tronqué silencieusement son historique**.
+
+**`Portail.tsx`**
+- Le bouton « trimestre précédent » devient un **sélecteur de 4 pilules**
+  (`T3 2026`, `T2 2026`…), avec cache **par trimestre ET par profil** (vidé à
+  chaque changement de personne).
+- Si l'API ne renvoie pas `quarters` (déploiement partiel), le sélecteur disparaît
+  et le portail se comporte comme avant : **dégradation propre**.
+
+**`fedasil.css`** : une seule classe ajoutée, `.quarter-switch` (même vocabulaire
+visuel que `.lang-switch`).
 
 ## 6. Données SharePoint
 
@@ -810,6 +919,31 @@ CHANGELOG-session-2026-07-12.md et §5.18/§5.19 (mobile, statuts de paiement
 colorés, boutons de paiement intégrés aux tuiles, montant libre, pastille
 d'activation unique, aide fiche de paie, « Réessayer », 401 → reconnexion,
 NN formaté + modulo 97 client, conformité ESLint react-hooks v6).
+
+✅ **TERMINÉ (v10, 14/7) — CHANTIER §10.0 : historique multi-trimestres**
+(règle §5.22) : fenêtre de 4 trimestres (courant → KB-Cumul, antérieurs →
+Soldes) ; `Me.ts` (paramètres `quarter`/`year`, réponse enrichie `year` /
+`archived` / `quarters`, pagination `@odata.nextLink`) ; `Portail.tsx` (sélecteur
+de 4 pilules, cache par trimestre × profil ; trimestre clôturé consultable et
+**payable**, mais ni déclarable ni corrigeable) ; `.quarter-switch` dans
+`fedasil.css`. **Commit au vert, tests fonctionnels concluants sur le site de
+test.**
+
+🔧 **Deux bugs corrigés au passage (v10, 14/7)** — tous deux invisibles jusque-là :
+
+1. **`paymentDeadline()` déduisait l'année de la date du jour.** Sur un trimestre
+   clôturé de l'année précédente, l'échéance était calculée sur la mauvaise année :
+   des mois affichés « échéance dépassée » à tort (ou l'inverse). L'année vient
+   désormais de l'API (`year`), avec repli sur l'ancienne déduction si absente.
+2. **Un trimestre SANS aucune déclaration masquait la carte du trimestre** — donc
+   rendait toute déclaration impossible. Or une liste KB-Cumul est **vide au
+   lendemain de chaque rotation** : le jour de la première bascule réelle, plus
+   aucun résident n'aurait pu déclarer, et rien n'aurait débloqué la situation.
+   Invisible sur le jeu de simulation (tous les résidents y ont des déclarations).
+   La carte est désormais toujours affichée.
+
+📌 **À FAIRE (non bloquant)** : automatiser `sp:soldes` (nocturne — Power Automate
+ou timer trigger), voir §5.20.1. En attendant : **lancement hebdomadaire manuel**.
 
 ✅ **TERMINÉ (v9, 13/7 soir) — CHANTIER §10.0 : bascule automatique du
 trimestre** (liste `Config`, règle §5.21) : schéma, `sp:rotate` v2
@@ -1252,57 +1386,121 @@ test.
   pas un bug. L'UTC est volontaire pour la traçabilité (sans ambiguïté de
   fuseau ni de passage heure d'été/hiver).
 
+## 11quater. Leçons de la session du 14/7 (historique — et la session v6 effacée)
+
+### 1. LA leçon : un fichier complet livré doit partir du fichier RÉEL, lu intégralement
+
+**Ce qui s'est passé.** Le 13/7 au soir, le commit `ac587a5` (« issues de secours
+sur les écrans d'erreur ») a livré un `Portail.tsx` complet **reconstruit sur une
+base antérieure au 12/7**. Bilan mesuré : `1 file changed, 164 insertions, 862
+deletions`. Le fichier est passé de ~2 186 à 1 488 lignes. **Cinq commits de la
+session ergonomie v6 ont été effacés** (`useCoarsePointer`, statuts de paiement
+colorés, montant libre, pastille d'activation, aide fiche de paie, pictogrammes,
+401 → reconnexion) — pour ajouter deux boutons.
+
+Le désastre est passé inaperçu : le fichier compilait, se déployait, et les deux
+boutons ajoutés fonctionnaient.
+
+**Récupération** (Git avait tout) :
+
+```bash
+git log --oneline --all -S "useCoarsePointer" -- src/Portail.tsx   # l'ajout ET la suppression
+git show --stat ac587a5                                            # étendue exacte des dégâts
+git show 9190e89:src/Portail.tsx > ~/Desktop/portail-v6.tsx        # dernier état sain
+```
+
+**La règle, désormais.** Avant de livrer un fichier complet, **chercher dans le
+fichier réel une chaîne caractéristique de la session précédente**. Le contrôle
+coûte 10 secondes. Ici, un `Cmd+F "useCoarsePointer"` aurait sauvé cinq commits.
+
+Corollaire pour CE document : il est mis à jour par **éditions ciblées sur le
+fichier réel**, jamais reconstruit de mémoire. Un document de 1 300 lignes est
+exposé au même risque qu'un fichier de code.
+
+### 2. La documentation ne mentait PAS — c'est le code qui avait été amputé
+
+Diagnostic initial (erroné) : « la doc décrit du code absent, elle ment une
+3ᵉ fois ». Faux. Le CHANGELOG du 12/7 était **exact** : il décrivait du code
+précis (`useCoarsePointer`, `matchMedia`, `paymentDeadline()`, clé localStorage
+`ra-activated-{oid}`), avec ses commits. C'est le code qui avait disparu.
+
+**Leçon** : face à un écart doc ↔ code, **l'historique Git tranche** — pas
+l'intuition. `git log -S "<chaîne>"` dit exactement quel commit a ajouté, puis
+supprimé, une chaîne donnée.
+
+### 3. Un jeu de simulation « complet » masque les cas VIDES
+
+Le bug du trimestre vide (§10) était **structurel et bloquant** : il se serait
+déclenché le jour de la première bascule réelle, pour **tous** les résidents à la
+fois. Il n'a jamais été vu parce que le jeu de simulation donne des déclarations à
+tout le monde.
+
+**Leçon** : tester aussi **l'état vide** — liste vide, trimestre vide, profil sans
+donnée. `sp:rotate --config-only` permet de basculer `Config` sur un trimestre vide
+et de reproduire exactement le lendemain d'une rotation.
+
+### 4. Ajouter une dimension révèle les endroits qui la DEVINAIENT
+
+`paymentDeadline()` **déduisait** l'année de la date du jour — acceptable tant
+qu'on n'affichait que le trimestre courant, faux dès qu'on affiche un trimestre de
+l'an dernier.
+
+**Leçon** : quand une donnée nouvelle devient disponible (ici `year`), chercher
+tous les endroits qui la **devinaient** jusque-là. Une déduction implicite est une
+bombe à retardement : elle n'explose que lorsque le contexte s'élargit.
+
 ## 12. Prompt de relance (à coller au début de la prochaine conversation)
 
 > Bonjour Claude. Je poursuis le développement de ResidentApp (portail Fedasil
 > pour résidents, React + TypeScript + CSS pur, Azure Static Web Apps +
 > Functions). CONTEXTE : tout l'état du projet est dans
-> ETAT-PROJET-ResidentApp.md (**v9 du 13 juillet 2026, soir**) dans les
-> fichiers du projet — lis-le d'abord, en particulier **§5.20 (liste Soldes)**,
-> **§5.21 (liste Config)**, **§6.1 (index SharePoint — RÈGLE CORRIGÉE)** et
-> **§11ter (leçons)**.
+> ETAT-PROJET-ResidentApp.md (**v10 du 14 juillet 2026**) dans les fichiers du
+> projet — lis-le d'abord, en particulier **§5.20 + §5.20.1 (liste Soldes et sa
+> cadence)**, **§5.21 (liste Config)**, **§5.22 (historique multi-trimestres)**,
+> **§6.1 (index SharePoint — RÈGLE CORRIGÉE)** et **§11ter + §11quater
+> (leçons)**.
 >
-> EN RÉSUMÉ : le parcours résident complet est validé en production
-> (authentification Entra personnalisée, matching par `oid`, sélecteur de
-> profils familiaux et aidants). Le provisioning est déclaratif
-> (`sharepoint-schema.json` + `sp:provision`, qui sert AUSSI d'audit d'index),
-> la liste permanente « Soldes » existe (`sp:soldes`), et **la bascule
-> trimestrielle est désormais AUTOMATIQUE** : une liste SharePoint `Config`
-> (ligne `ActiveQuarter`) écrite par `sp:rotate` (confirmation `BASCULER`,
-> modes `--config-only` / `--annee=`) porte le trimestre actif ; `Me.ts` et
-> `Declare.ts` la lisent via `api/src/shared/quarterConfig.ts` (cache 5 min,
-> repli variables d'env). Plus aucune variable ni redéploiement à la clôture.
+> EN RÉSUMÉ : le parcours résident complet est validé (authentification Entra
+> personnalisée, matching par `oid`, profils familiaux et aidants). Le
+> provisioning est déclaratif (`sharepoint-schema.json` + `sp:provision`, qui sert
+> AUSSI d'audit d'index) ; la liste permanente « Soldes » existe (`sp:soldes`) ;
+> la bascule trimestrielle est AUTOMATIQUE (liste `Config`, lue par
+> `Me.ts`/`Declare.ts` via `api/src/shared/quarterConfig.ts`) ; et **le résident
+> consulte désormais une fenêtre de 4 trimestres** (courant → KB-Cumul, antérieurs
+> → Soldes ; sélecteur de pilules dans `Portail.tsx`, paiement possible sur un
+> trimestre clôturé, mais ni déclaration ni correction).
 >
 > ⚠ RÈGLE À NE PAS OUBLIER (§6.1) : Graph refuse un `$filter` sur colonne NON
-> INDEXÉE **immédiatement**, même sur une petite liste — le seuil des 5 000
-> n'est pas la condition du refus. Toute colonne d'un filtre doit être indexée
-> (ou disparaître du filtre). Deux pannes de production l'ont démontré.
+> INDEXÉE **immédiatement**, même sur une petite liste — le seuil des 5 000 n'est
+> PAS la condition du refus. Toute colonne d'un filtre doit être indexée (ou
+> disparaître du filtre). Deux pannes de production l'ont démontré.
+>
+> ⚠ RÈGLE NÉE D'UN DÉSASTRE (§11quater) : **avant de me livrer un fichier complet,
+> ouvre le fichier RÉEL et lis-le EN ENTIER**, puis vérifie qu'il contient bien une
+> chaîne caractéristique de la session précédente. Le 13/7 au soir, un
+> `Portail.tsx` reconstruit de mémoire a effacé **cinq commits** (~700 lignes) sans
+> que rien ne casse : ça compilait, ça se déployait. Ne fais confiance ni à ta
+> mémoire du fichier, ni à ce que la doc affirme du code — `git log -S "<chaîne>"`
+> tranche.
+>
+> ⚠ FENÊTRE DE 4 TRIMESTRES (§5.22) : la constante `HISTORY_QUARTERS` ne peut PAS
+> être augmentée tant que la communication structurée n'encode pas l'année (sinon
+> avril 2025 et avril 2026 portent la même communication → paiements
+> inimputables).
 >
 > ⚠ TOUT EST SUR LE SITE DE TEST (`Resident_Test`), avec un jeu de simulation
-> complet (~1 845 résidents, ~14 800 déclarations, 20 113 lignes Soldes,
-> `sp:seed`). Rien n'est répliqué en production Fedasil : cela se fera après
-> validation métier, et **les index devront y être posés AVANT de déployer le
-> code** (`sp:provision` les liste). La « bascule du 1er août » n'est PLUS une
-> échéance : sans mise en service, il n'y a rien à basculer (§10).
+> complet (`sp:seed`). Rien n'est répliqué en production Fedasil : cela se fera
+> après validation métier, et **les index devront y être posés AVANT de déployer le
+> code** (`sp:provision` les liste). Il n'y a donc plus d'échéance de bascule
+> (§10).
 >
-> OBJECTIF DE CETTE DISCUSSION — **chantier §10.0 (ex-10.0bis) : historique
-> multi-trimestres pour le résident** (cadré le 13/7, NON commencé) : le
-> résident doit voir **au moins les 4 derniers trimestres, courant compris**.
-> Architecture retenue : **trimestre courant → KB-Cumul** (fraîcheur immédiate),
-> **trimestres antérieurs → Soldes** (mémoire permanente, insensible aux
-> rotations). Touche `Me.ts` (lecture Soldes + liste des trimestres
-> disponibles) ET `Portail.tsx` (le bouton « trimestre précédent » devient un
-> sélecteur).
-> ⚠ AVANT DE CODER, on tranche ensemble : combien de trimestres exactement ?
-> Que fait-on des mois sans déclaration (absents de Soldes) ? Le paiement
-> reste-t-il possible sur un trimestre archivé ?
+> OBJECTIF DE CETTE DISCUSSION : [À COMPLÉTER — pistes ouvertes : automatiser
+> `sp:soldes` (§5.20.1) ; tester systématiquement les états VIDES (§11quater.3) ;
+> reprendre l'app staff (CONCEPTION-STAFF-APP.md, six modules) ; préparer la
+> réplication production (index AVANT le code).]
 >
 > Rappel de ma façon de travailler : je suis débutant confirmé, je préfère des
-> fichiers complets copier-coller prêts plutôt que des patchs, un pas-à-pas
-> pour les manipulations Azure/Entra/Power Platform, et je commite via
-> l'interface Git de VS Code (donne-moi juste les messages de commit, **en UN
-> SEUL commit**). Avant tout push : `npm run build` à la racine ET dans `api/`.
-> ⚠ Consigne née d'erreurs répétées : **ouvre et lis les fichiers concernés
-> AVANT de recommander une réécriture** — ne suppose pas ce que contient le
-> code, et ne fais pas confiance à ce que la doc affirme du code (deux fois
-> déjà, l'état projet décrivait des choses absentes des fichiers).
+> fichiers complets copier-coller prêts plutôt que des patchs, un pas-à-pas pour
+> les manipulations Azure/Entra/Power Platform, et je commite via l'interface Git
+> de VS Code (donne-moi juste les messages de commit, en UN SEUL commit). Avant
+> tout push : `npm run build` à la racine ET dans `api/`.
