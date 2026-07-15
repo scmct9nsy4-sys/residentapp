@@ -1,0 +1,137 @@
+/* ============================================================================
+ *  soldes-timer/src/functions/soldesNightly.ts
+ *  Function App NOCTURNE — synchronisation KB-Cumul -> liste « Soldes »
+ * ----------------------------------------------------------------------------
+ *  CHANTIER 2b (§5.20.1). Cette Function ne contient AUCUNE règle métier : elle
+ *  se contente d'appeler syncAuto() du module partagé
+ *  scripts/lib/soldes-sync.ts — LE MÊME code que la CLI « npm run sp:soldes --
+ *  --auto ». Une seule définition de Balance / PayStatus / DueDate dans tout le
+ *  dépôt : aucune dérive possible entre la ligne de commande et l'automate (§7).
+ *
+ *  Pourquoi un dossier séparé de « api/ » : les Functions MANAGÉES d'une Static
+ *  Web App ne supportent QUE les déclencheurs HTTP. Un déclencheur timer exige
+ *  une Function App distincte (§5.20.1).
+ *
+ *  Le module est importé PAR CHEMIN RELATIF (pas de copie). esbuild l'inline
+ *  dans le bundle au build ; Azure ne reçoit qu'un fichier autonome.
+ *
+ *  Identifiants Graph : lus dans les variables d'environnement (App Settings en
+ *  Azure, local.settings.json en local) — jamais chez GitHub (§10.11).
+ *
+ *  Garde-fou : SOLDES_DRY_RUN=true fait tourner la synchro en lecture seule
+ *  (aucune écriture). À poser AVANT le tout premier lancement en Azure, pour
+ *  valider la connexion et le chemin de lecture sans rien modifier.
+ * ============================================================================ */
+
+import { app, type InvocationContext, type Timer } from "@azure/functions";
+
+import {
+  createGraphClient,
+  getSiteId,
+  syncAuto,
+  formatSummary,
+  SoldesSyncError,
+  type Settings,
+} from "../../../scripts/lib/soldes-sync";
+
+/** Les 5 identifiants attendus — mêmes noms que api/local.settings.json. */
+const REQUIRED_SETTINGS = [
+  "TENANT_ID",
+  "GRAPH_CLIENT_ID",
+  "GRAPH_CLIENT_SECRET",
+  "SP_SITE_HOSTNAME",
+  "SP_SITE_PATH",
+] as const;
+
+/** Lit les identifiants depuis l'environnement, ou échoue FRANCHEMENT.
+ *  Contrairement au portail (qui a un repli sur variables d'env.), un automate
+ *  qui synchroniserait le mauvais site en silence serait pire que rien : on
+ *  refuse de démarrer si un identifiant manque. */
+function loadSettings(): Settings {
+  const values: Record<string, string> = {};
+  const missing: string[] = [];
+
+  for (const key of REQUIRED_SETTINGS) {
+    const v = (process.env[key] ?? "").trim();
+    if (!v) missing.push(key);
+    values[key] = v;
+  }
+
+  if (missing.length > 0) {
+    throw new SoldesSyncError(
+      `Variable(s) d'environnement manquante(s) : ${missing.join(", ")}. ` +
+        `Les renseigner dans les App Settings de la Function App (ou dans ` +
+        `soldes-timer/local.settings.json en local).`
+    );
+  }
+
+  return values as Settings;
+}
+
+/** Point d'entrée du timer. */
+export async function soldesNightly(
+  myTimer: Timer,
+  context: InvocationContext
+): Promise<void> {
+  const log = (message: string): void => context.log(message);
+  const dryRun = (process.env.SOLDES_DRY_RUN ?? "").trim().toLowerCase() === "true";
+
+  const startedAt = Date.now();
+  log(
+    `Synchronisation Soldes — démarrage${dryRun ? " [MODE DRY-RUN : aucune écriture]" : ""}`
+  );
+  if (myTimer.isPastDue) {
+    context.warn(
+      "Déclenchement en retard (isPastDue) : exécution de rattrapage."
+    );
+  }
+
+  try {
+    const cfg = loadSettings();
+    const graph = createGraphClient(cfg, log);
+    const siteId = await getSiteId(graph, cfg, log);
+
+    const { active, results } = await syncAuto(graph, siteId, { dryRun, log });
+
+    log(
+      `Trimestre actif : T${active.quarter} ${active.year} ` +
+        `(« ${active.cumulListName} »)`
+    );
+    log(formatSummary(results, dryRun));
+
+    const outOfQuarter = results.reduce((n, r) => n + r.outOfQuarter, 0);
+    if (outOfQuarter > 0) {
+      // Anomalie de DONNÉES (ligne dans la mauvaise liste trimestrielle) : à
+      // remonter bruyamment, mais ce n'est pas un échec d'exécution.
+      context.warn(
+        `⚠ ${outOfQuarter} ligne(s) hors trimestre : année déduite peut-être ` +
+          `fausse dans Soldes. À investiguer (voir §5.20.1).`
+      );
+    }
+
+    const seconds = Math.round((Date.now() - startedAt) / 1000);
+    log(`Synchronisation Soldes — terminée en ${seconds}s.`);
+  } catch (err) {
+    // On journalise en ERREUR (visible dans Application Insights) ET on relance :
+    // l'exécution est ainsi marquée « échouée » côté plateforme. Un timer ne
+    // rejoue PAS après un échec — la prochaine exécution nocturne resynchronise
+    // de toute façon (upsert idempotent), donc une nuit ratée n'est pas grave.
+    const detail =
+      err instanceof SoldesSyncError
+        ? err.message
+        : err instanceof Error
+          ? err.stack ?? err.message
+          : String(err);
+    context.error(`Échec de la synchronisation Soldes : ${detail}`);
+    throw err;
+  }
+}
+
+// Enregistrement de la Function (modèle Node v4). NCRONTAB à 6 champs :
+// {seconde} {minute} {heure} {jour} {mois} {jour-semaine}. 01:30 UTC chaque
+// jour = 02:30 (hiver) / 03:30 (été) en Belgique — nocturne toute l'année.
+app.timer("soldesNightly", {
+  schedule: "0 30 1 * * *",
+  runOnStartup: false,
+  handler: soldesNightly,
+});

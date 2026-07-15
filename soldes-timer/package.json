@@ -1,0 +1,24 @@
+{
+  "name": "soldes-timer",
+  "version": "1.0.0",
+  "description": "Function App nocturne : synchronisation KB-Cumul -> Soldes (chantier 2b, §5.20.1). Importe scripts/lib/soldes-sync.ts.",
+  "private": true,
+  "main": "dist/soldesNightly.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run clean && esbuild src/functions/soldesNightly.ts --bundle --platform=node --format=cjs --target=node20 --external:@azure/functions --outfile=dist/soldesNightly.js",
+    "start": "npm run build && func start"
+  },
+  "dependencies": {
+    "@azure/functions": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "esbuild": "^0.23.0",
+    "typescript": "^5.5.0"
+  }
+}

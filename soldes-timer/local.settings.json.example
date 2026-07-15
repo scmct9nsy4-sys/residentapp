@@ -1,0 +1,15 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "node",
+
+    "TENANT_ID": "610bf274-1738-4323-af0a-8c108945a1d9",
+    "GRAPH_CLIENT_ID": "<GRAPH_CLIENT_ID identique à api/local.settings.json>",
+    "GRAPH_CLIENT_SECRET": "<GRAPH_CLIENT_SECRET identique à api/local.settings.json>",
+    "SP_SITE_HOSTNAME": "giapplab.sharepoint.com",
+    "SP_SITE_PATH": "sites/Resident_Test",
+
+    "SOLDES_DRY_RUN": "true"
+  }
+}

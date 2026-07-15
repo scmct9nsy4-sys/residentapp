@@ -1,0 +1,12 @@
+# Dépendances et build (régénérés par npm install / npm run build)
+node_modules/
+dist/
+
+# ⚠ SECRETS — ne JAMAIS versionner (contient le secret Graph)
+local.settings.json
+
+# Azurite (émulateur de stockage local, si utilisé)
+__azurite_db*__.json
+__blobstorage__
+__queuestorage__
+.debug/
