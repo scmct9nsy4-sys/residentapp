@@ -1,16 +1,21 @@
 # CONCEPTION FONCTIONNELLE — Application Staff (Fedasil)
 
-**Version 2 — 12 juillet 2026** (remplace la v1 du 12 juillet 2026)
+**Version 3 — 16 juillet 2026** (remplace la v2 du 12 juillet 2026)
 Outil interne de gestion du processus de contribution financière des résidents.
 
 Documents compagnons :
 - `ETAT-PROJET-ResidentApp.md` — le portail résident (règles métier §5)
 - `SETUP-STAFF-APP-PowerApps.md` — l'installation et l'architecture technique
 
-> **Statut : conception + première brique de données livrée.**
-> Depuis la v1 : la **§3 est TRANCHÉE** (liste « Soldes » créée, synchronisée
-> et validée sur le tenant de test — voir §3 et le journal des décisions §7).
-> Aucun module applicatif n'est encore développé.
+> **Statut : conception détaillée du recouvrement TRANCHÉE (16/7).**
+> Depuis la v2 : le **module 4 est entièrement spécifié** — cadence datée du
+> circuit de rappels, granularité (traçabilité par mois, courrier par
+> dossier), **compromis d'automatisation gradué** (amende le principe « jamais
+> d'envoi automatique »), publipostage des mises en demeure **piloté depuis
+> l'app en trois marches**, garde-fou de fraîcheur. Un **module 7
+> « Supervision des inscriptions »** est ajouté (périmètre validé le 16/7).
+> Le plan d'apurement est inscrit comme état suspensif (conception
+> ultérieure). Aucun module applicatif n'est encore développé.
 
 ---
 
@@ -20,25 +25,27 @@ Le service gestion des processus est responsable du cycle complet de la
 contribution financière des résidents :
 
 ```
-  Déclaration          Paiement            Recouvrement              Contrôle
-  du résident    →     et lettrage    →    (si impayé)         +     trimestriel
-  ─────────────        ────────────        ─────────────             ────────────
-  (portail)            virement            rappel 1                  BCSS (brut)
-                       imputation          rappel 2                    ↕ comparaison
-                       sur le mois         mise en demeure           net déclaré
-                                           contentieux               → régularisation
+  Inscription     Déclaration      Paiement          Recouvrement            Contrôle
+  du résident  →  du résident  →   et lettrage   →   (si impayé)        +    trimestriel
+  ────────────    ────────────     ────────────      ─────────────           ────────────
+  (portail,       (portail)        virement          rappel 1 (auto)         BCSS (brut)
+  automatique ;                    imputation        rappel 2 (lot)            ↕ comparaison
+  supervision                      sur le mois       mise en demeure         net déclaré
+  staff — mod. 7)                                    contentieux             → régularisation
 ```
 
 Aujourd'hui, ce processus est **outillé uniquement du côté résident** (le
 portail). Tout ce qui suit la déclaration — imputation des paiements, relances,
-contrôle — se fait manuellement, dans SharePoint et en dehors.
+contrôle — se fait manuellement, dans SharePoint et en dehors. Les mises en
+demeure passent par un **fichier Excel** alimenté à la main, servant de source
+à un **publipostage Word**, imprimé puis envoyé en recommandé.
 
 **Le fil rouge de l'application staff : donner au collaborateur une vue et un
 geste là où il n'a aujourd'hui que des listes et des exports.**
 
 ---
 
-## 2. Les six modules
+## 2. Les sept modules
 
 ### Module 1 — Tableau de bord trimestriel (page d'accueil)
 
@@ -52,7 +59,10 @@ geste là où il n'a aujourd'hui que des listes et des exports.**
   héritées du processus manuel) ;
 - nombre de paiements « À traiter » dans la file de lettrage ;
 - nombre de dossiers par niveau d'escalade (rappel / mise en demeure /
-  contentieux).
+  contentieux) ;
+- **(v3)** état du garde-fou de fraîcheur du moteur de rappels (module 4) :
+  date du dernier import CSV bancaire, taille de la file de lettrage,
+  dernier passage de la synchro Soldes.
 
 C'est la boussole : elle ne fait rien, elle **oriente**.
 
@@ -60,6 +70,10 @@ C'est la boussole : elle ne fait rien, elle **oriente**.
 > serveur (pas de SUM). Les indicateurs seront **précalculés** (flux Power
 > Automate nocturne → mini-liste « Indicateurs » de quelques lignes) plutôt
 > que recalculés à chaque ouverture d'écran. Voir principe §6.
+> **(v3)** Même règle pour « les FA sans déclaration ce trimestre » : c'est
+> une requête par ABSENCE, impossible en `$filter` — elle se précalcule
+> (croisement Residents List × Soldes dans le traitement nocturne), elle ne
+> se calcule jamais à l'écran.
 
 ---
 
@@ -79,8 +93,22 @@ listes.
 - **paiements ligne par ligne** (détail KB-Paiements, pas seulement le cumul
   `Paid`) ;
 - solde global ;
-- historique des rappels envoyés (quel niveau, quelle date, quel canal) ;
+- historique des rappels envoyés (quel niveau, quelle date, quel canal —
+  colonnes du module 4) ;
 - **notes internes horodatées**.
+
+**(v3) Geste staff : déclaration rétroactive / correction sur trimestre
+clôturé.** Le portail l'interdit volontairement (état projet §5.22 décision 2 :
+`Declare.ts` borne l'écriture au trimestre en cours). C'est donc un geste
+**exclusivement staff**, régi par la règle de vérité §3.2 :
+- trimestre **courant** → écrire dans **KB-Cumul** (le portail la lit),
+  `sp:soldes` resynchronise ;
+- trimestre **clos** → écrire **directement dans Soldes**.
+
+Ce geste utilise le **même barème de contribution** que le portail (principe
+§6 : module partagé, jamais une troisième copie). Il est aussi la porte
+d'entrée des **régularisations BCSS** du module 5 — le construire proprement
+ici le rend réutilisable là-bas.
 
 > ✅ Le « point dur » historique de la v1 est levé : voir §3.
 
@@ -120,51 +148,174 @@ puis `sp:soldes` resynchronise ; pour un mois dont la liste trimestrielle a
 > convertir en **codes neutres** (principe §6) en même temps que l'alignement
 > du schéma sur la liste réelle Fedasil.
 
+**(v3)** Le module 3 conditionne directement le module 4 : le **garde-fou de
+fraîcheur** du moteur de rappels s'appuie sur l'état de cette file (voir
+module 4). Relancer un résident dont le paiement dort dans la file « À
+traiter » est LE scénario à rendre impossible.
+
 ---
 
-### Module 4 — Moteur de rappels (machine à états)
+### Module 4 — Moteur de rappels (machine à états) — SPÉCIFIÉ LE 16/7/2026
 
-**Le besoin** : le cœur du recouvrement, aujourd'hui entièrement manuel.
+**Le besoin** : le cœur du recouvrement, aujourd'hui entièrement manuel
+(sélection à la main, Excel, publipostage Word, recommandés).
 
-**Machine à états par dossier** :
+#### 4.1 La machine à états, datée (décisions du 16/7)
 
 ```
-  À jour  →  En retard  →  Rappel 1  →  Rappel 2  →  Mise en demeure  →  Contentieux
+  Mois M déclaré, impayé ou partiel
+     │
+     ├─ DueDate (fin de M+1) dépassée ──→  RAPPEL 1          e-mail, AUTOMATIQUE
+     │                                      ton neutre, QR + communication structurée
+     │
+     ├─ DueDate + 1 mois ───────────────→  RAPPEL 2          e-mail, TOUJOURS
+     │                                      lot nocturne validé d'un clic le matin
+     │                                      ton ferme + annonce de la mise en demeure
+     │
+     ├─ Rappel 2 + 15 jours ────────────→  MISE EN DEMEURE   lettre recommandée papier
+     │                                      validation INDIVIDUELLE par le CHEF DE SERVICE
+     │
+     └─ MD + délai À DÉFINIR ───────────→  CONTENTIEUX       export dossier complet PDF
+                                            → service juridique
+
+  État suspensif : PLAN D'APUREMENT (conception ultérieure — voir 4.6)
 ```
 
-Chaque transition porte une **date d'envoi** et un **délai de réponse**.
+L'échéance est celle de l'état projet §5.18 : la contribution du mois M est
+due pour la **fin du mois M+1** (`DueDate`, précalculée dans Soldes). L'état
+« échu » n'est jamais stocké : il se dérive de `DueDate` à l'affichage et dans
+le moteur.
 
-**Fonctionnalités attendues** :
+#### 4.2 Granularité — TRANCHÉE (16/7) : traçabilité par MOIS, courrier par DOSSIER
 
-1. **Vue « candidats au rappel »** : tous les mois échus impayés, groupés par
-   résident, filtrables par **centre** et par **niveau d'escalade**.
-   Requête type sur Soldes : `PayStatus = Unpaid|Partial` (indexée) composée
-   avec `Year`/`Quarter`, et `DueDate < aujourd'hui` évaluée à l'affichage.
-   (Échéance = fin du mois suivant la clôture du mois concerné — §5.18,
-   colonne `DueDate` précalculée.)
+La question ouverte de la v2 (« escalade par mois ou par dossier ? ») est
+résolue par la pratique métier :
 
-2. **Génération par lots validée par un humain** : le collaborateur coche,
-   clique « Générer les rappels 1 », et l'application produit les courriers /
-   e-mails :
-   - **multilingues** (même public que le portail : FR / NL / EN) ;
-   - avec le **QR de paiement** et la **communication structurée d'apurement**
-     — c'est ici que le préfixe réservé **`9T0`** (§5.12) trouve son usage.
+- **Chaque MOIS impayé porte sa propre trace** (`ReminderLevel`,
+  `Reminder1Date`, `Reminder2Date`, `NoticeDate`, `NoticeChannel` sur sa
+  ligne Soldes). Indispensable juridiquement : une mise en demeure doit
+  prouver les rappels préalables **pour chaque créance**.
+- **Chaque ENVOI regroupe tous les mois du FA au même niveau** : le résident
+  reçoit UNE lettre listant ses trois mois en retard, pas trois lettres.
+  L'envoi estampille sa date sur chacune des lignes qu'il couvre.
+- **On ne saute jamais d'étape pour une créance donnée** : un mois qui devient
+  exigible plus tard entre au rappel 1, même si le dossier est déjà en mise en
+  demeure pour d'autres mois.
+- Le « niveau du dossier » (tableau de bord, fiche 360°) est **dérivé** : le
+  maximum des niveaux de ses mois. Il n'est stocké nulle part.
 
-   ⚠ **Jamais d'envoi automatique sans validation humaine.**
+#### 4.3 Compromis d'automatisation — DÉCIDÉ (16/7, amende le principe §6)
 
-3. **La trace** : quel rappel, quelle date, quel canal. Indispensable — une
-   mise en demeure exige de **prouver les rappels préalables**.
-   Les colonnes de la machine à états (niveau d'escalade, dates…) seront
-   ajoutées à la liste Soldes par provisioning **lors de ce module** —
-   `sp:soldes` ne touche jamais aux colonnes qu'il ne possède pas, elles
-   sont donc à l'abri de la resynchronisation. Question de conception à
-   trancher alors : escalade **par mois** ou **par dossier** (la machine à
-   états est « par dossier » ; un dossier = l'ensemble des mois impayés
-   d'un FA).
+| Niveau | Mode | Justification |
+|---|---|---|
+| **Rappel 1** | **Automatique** (e-mail), interrupteur global ON/OFF dans la liste `Config`, journal complet | Enjeu faible, réversible, équivalent d'un rappel de facture. C'est lui qui fait le volume. |
+| **Rappel 2** | **Lot préparé la nuit, validé d'un clic le matin** — le collaborateur voit la liste, décoche les cas particuliers, clique « Envoyer » | E-mail toujours (décision 16/7), mais le ton annonce la MD : un regard humain avant l'envoi. |
+| **Mise en demeure** | **Validation individuelle OBLIGATOIRE par le chef de service** (décision 16/7) | Acte juridique, coût du recommandé, irréversibilité. |
+| **Contentieux** | Transmission manuelle (export dossier complet) | Hors du périmètre d'automatisation. |
 
-4. **Export « dossier complet »** (PDF) pour le contentieux : déclarations,
-   paiements, rappels, mises en demeure — prêt à transmettre au service
-   juridique.
+Le principe historique « jamais d'envoi automatique sans validation humaine »
+devient : **« l'automatisation est graduée par l'enjeu ; rien d'IRRÉVERSIBLE
+ne part sans validation humaine »** (voir §6, principe amendé). Tout envoi —
+automatique ou validé — est journalisé (quoi, quand, quel canal, quels mois,
+qui a validé le cas échéant).
+
+#### 4.4 Garde-fou de fraîcheur — NON NÉGOCIABLE
+
+Le pire scénario du recouvrement : **relancer un résident qui a payé** (risque
+n°1 de l'état projet §5.20.1 — appels au centre, perte de confiance). Le
+moteur ne tourne donc que si les données sont fraîches :
+
+1. il s'exécute **après** la synchronisation Soldes nocturne (Function App
+   `residentapp-soldes-timer`, 01:30 UTC — chantier 2b TERMINÉ, v12) ;
+2. il **s'abstient entièrement** (et le signale au tableau de bord) si :
+   - la file « À traiter » de KB-Paiements dépasse un **seuil** (à définir), ou
+   - le dernier import CSV bancaire date de plus de **X jours** (à définir).
+
+Les seuils sont des paramètres (liste `Config`), pas des constantes de code.
+Un dossier sous **plan d'apurement** (4.6) est également exclu.
+
+#### 4.5 Vue « candidats au rappel » et requêtes
+
+Tous les mois échus impayés, groupés par résident, filtrables par **centre**
+et par **niveau d'escalade**.
+
+- Requête d'écran type sur Soldes : `PayStatus = Unpaid|Partial` (indexée)
+  composée avec `Year`/`YearMonth` (discipline « 5000 », §6) ; `DueDate <
+  aujourd'hui` évaluée à l'affichage.
+- Le **moteur nocturne**, lui, balaie Soldes en **lecture paginée sans
+  filtre** (principe §6 point 5 — non soumise au seuil), ce qui évite
+  d'ajouter des index pour ses propres besoins.
+- Les compteurs du tableau de bord (dossiers par niveau) sont **précalculés**
+  par le même passage nocturne → liste « Indicateurs ».
+
+#### 4.6 Plan d'apurement — état suspensif (conception ultérieure)
+
+Décision 16/7 : un collaborateur pourra accorder un **plan d'apurement**
+(plans standards envisagés : 3 ou 6 mois). Effets déjà actés :
+
+- un dossier sous plan **sort automatiquement du circuit de rappels** tant que
+  le plan est respecté — plus besoin de le « décocher » à chaque lot ;
+- le non-respect du plan le réintègre (modalités à concevoir) ;
+- le provisioning du module 4 **réserve la place** (le modèle de données
+  prévoit l'extension : référence de plan, statut), sans rien coder du plan
+  lui-même aujourd'hui.
+
+#### 4.7 Contenu des courriers
+
+- **Multilingues** (même public que le portail : FR / NL / EN — langue lue
+  dans Residents List) ;
+- pour chaque mois : montant restant dû et **sa communication structurée
+  D'ORIGINE** (`StructuredCom`, conservée dans Soldes — état projet §5.22
+  décision 3). Dans la fenêtre de 4 trimestres, ces communications sont **non
+  ambiguës** : le lettrage automatique du module 3 imputera les paiements sans
+  intervention. Le préfixe d'apurement **`9T0`** (§5.12) ne devient nécessaire
+  que pour des dettes SORTIES de la fenêtre — hors périmètre v1 ;
+- **QR de paiement** (e-mails des rappels : lien vers le portail + QR EPC du
+  reste dû, comme sur le portail).
+
+#### 4.8 Mises en demeure — publipostage piloté depuis l'app, en TROIS MARCHES
+
+Le processus actuel (Excel rempli à la main → publipostage Word → impression
+→ recommandé) se pilote depuis l'app par paliers :
+
+| Marche | Quoi | Statut |
+|---|---|---|
+| **1** | **L'app génère l'Excel du publipostage** : écran « candidats à la MD » → le chef de service valide dossier par dossier → un bouton produit EXACTEMENT le fichier Excel attendu par le modèle Word existant (génération client-side, SheetJS). Le modèle Word, les habitudes, l'imprimante : rien ne change — mais la sélection est tracée et `NoticeDate` estampillée sur chaque ligne Soldes couverte. | **Cible de la v1 du module 4** — quasi gratuit |
+| **2** | **L'app fait générer les lettres elles-mêmes** : Power Automate + connecteur **Word Online (Business)** (« Populate a Microsoft Word template », Premium — licences acquises) : remplissage du modèle par résident (FR/NL/EN), conversion PDF, classement dans une bibliothèque SharePoint « Mises en demeure / <année> ». Le collaborateur imprime et poste. Plus d'Excel intermédiaire ; dossier archivé nativement (précieux pour l'export contentieux). | **Cible du module 4** (après la marche 1) |
+| **3** | **Recommandé électronique** : API bpost (recommandé hybride/électronique), eBox fédérale. À instruire avec le contrat bpost de Fedasil. | **Backlog** — piste, pas engagement |
+
+#### 4.9 La trace
+
+Quel rappel, quelle date, quel canal, quels mois couverts, **qui a validé**
+(lots du rappel 2 ; visa du chef de service pour chaque MD). Indispensable —
+une mise en demeure exige de **prouver les rappels préalables**.
+
+Les colonnes de la machine à états seront ajoutées à la liste Soldes **par
+provisioning lors de ce module** — `sp:soldes` ne touche jamais aux colonnes
+qu'il ne possède pas, elles sont donc à l'abri de la resynchronisation.
+Colonnes prévues (noms définitifs au provisioning) : `ReminderLevel` (0–3),
+`Reminder1Date`, `Reminder2Date`, `NoticeDate`, `NoticeChannel` — codes
+neutres partout (principe §6). Pas de nouvel index nécessaire a priori (les
+requêtes d'écran partent de `PayStatus`, le moteur balaie en paginé, les
+compteurs sont précalculés).
+
+#### 4.10 Où vit l'automatisation
+
+L'envoi automatique ne peut PAS vivre dans la Code App (frontend sous
+l'identité du collaborateur connecté, quand il est connecté). Il vit dans la
+**Function App `residentapp-soldes-timer` déjà déployée** : un second timer
+après la synchro Soldes, réutilisant le `sendMail` Graph qui envoie déjà les
+invitations du portail. Architecture déjà validée par Fedasil (secret Graph
+hors GitHub — état projet §10.11), **zéro nouvelle brique**. Les envois
+automatiques sont journalisés comme « système » ; les validations humaines
+(lots, visas MD) sont journalisées au nom du valideur (identité native de la
+Code App, module 6).
+
+#### 4.11 Export « dossier complet » (PDF) pour le contentieux
+
+Déclarations, paiements, rappels, mises en demeure — prêt à transmettre au
+service juridique. (La marche 2 du publipostage, qui archive les PDF dans une
+bibliothèque, en fournit la moitié.)
 
 ---
 
@@ -247,7 +398,63 @@ servent à développer la LOGIQUE de contrôle, pas le parseur définitif.
   (fail-closed, lecture complète + comparaison normalisée) est réutilisable tel
   quel pour une liste **« ResidentApp Staff »**.
 - **Rôles** à définir : *gestionnaire* (peut imputer, relancer, régulariser) vs
-  *lecture seule* (consultation).
+  *lecture seule* (consultation). **(v3)** S'y ajoute le rôle **chef de
+  service** : seul habilité à valider une mise en demeure (décision 16/7) —
+  le modèle de rôles doit porter cette distinction dès sa conception.
+
+---
+
+### Module 7 — Supervision des inscriptions (ajouté le 16/7/2026)
+
+**Le besoin** : voir ce qui a échoué à l'inscription, et pourquoi — sans
+fouiller Application Insights.
+
+**Le principe, validé le 16/7 : ce n'est PAS une validation, c'est une
+supervision.** La pré-inscription du portail est entièrement automatique par
+conception (NN vérifié contre Residents List → invitation B2B ou liaison
+directe d'un membre du tenant → e-mail). Aucun goulot humain n'est ajouté :
+le module donne au staff la **visibilité** sur les échecs et les **gestes de
+remédiation**.
+
+#### 7.1 Taxonomie des raisons (codes neutres, principe §6)
+
+| Code | Situation | Geste / traitement automatique |
+|---|---|---|
+| `Ineligible` | NN absent de Residents List | Aucun (c'est le garde-fou voulu). Statistique utile par période. |
+| `InternalBlocked` | Adresse interne absente de la liste garde-fou Aidants (403 fail-closed, §5.13) | Bouton « ajouter à la liste Aidants » (tracé : qui, quand) |
+| `InviteFailed` | Erreur Graph à la création de l'invitation | Bouton « relancer l'invitation » (idempotente) |
+| `InviteNotAccepted` | Invitation envoyée mais `EntraOid` toujours vide après X jours | **Relance automatique** de l'e-mail d'invitation (idempotente — candidat au timer nocturne, même logique graduée que le rappel 1 : interrupteur `Config` + journal) |
+| `EmailInvalid` | Adresse rejetée | Correction manuelle + relance |
+
+`InviteNotAccepted` est détectable **sans rien construire** : `EntraOid` vide
+sur Residents List + date d'invitation (colonnes mises à jour par
+`Subscription.ts` après invitation — noms exacts à relever dans le code au
+moment du build).
+
+#### 7.2 Liste « Journal-Inscriptions » (côté dépôt PORTAIL)
+
+Les autres cas ne vivent aujourd'hui QUE dans les logs Application Insights.
+Il faut donc une petite liste **écrite par `Subscription.ts`** — une ligne par
+tentative de pré-inscription :
+
+- horodatage, code résultat (taxonomie 7.1), langue choisie ;
+- `FedasilNumber` **si éligible** ;
+- NN **MASQUÉ si inéligible** — ⚠ règle de confidentialité absolue : jamais le
+  NN complet d'un inconnu dans la liste (le NN est le seul secret d'accès —
+  état projet §5.13) ; même prudence pour l'adresse e-mail des tentatives
+  échouées (masquée).
+
+C'est une modification du **dépôt portail** (qui possède la couche données —
+principe §6 « la couche données vit dans le dépôt ResidentApp ») : schéma
+dans `sharepoint-schema.json`, création par `sp:provision`. L'app staff ne
+fait que la lire. Spécification fine (colonnes, rétention) au moment du build.
+
+#### 7.3 Écran
+
+File des échecs récents (filtrable par code), compteurs par code sur la
+période, et les gestes du tableau 7.1. Volume attendu faible : aucune
+contrainte d'index particulière a priori (à confirmer au build — au pire,
+un index sur le code résultat).
 
 ---
 
@@ -276,10 +483,14 @@ d'arbitrage (à rédiger, voir §5 point 10).
 - **5 colonnes indexées** : `FedasilNumber`, `Year`, `Quarter`, `YearMonth`,
   `PayStatus` — chaque requête d'écran commence par l'une d'elles (voir la
   discipline §6).
-- **Alimentation** : script `npm run sp:soldes -- T2 2026` (dépôt ResidentApp,
-  couche données) — upsert idempotent depuis une liste KB-Cumul, rejouable à
-  volonté, mode `--dry-run`. Il ne touche **jamais** aux colonnes qu'il ne
-  possède pas : le module 4 pourra ajouter les siennes sans risque.
+- **Alimentation** : `npm run sp:soldes` (dépôt ResidentApp, couche données) —
+  upsert idempotent depuis les listes KB-Cumul, rejouable à volonté, mode
+  `--dry-run`. **Depuis le 14/7 : mode `--auto`** (déduit trimestre et années
+  de la liste `Config`, synchronise les 4 listes — état projet §5.20.1) ;
+  **depuis le 16/7 : exécution nocturne automatique** (Function App
+  `residentapp-soldes-timer`, 01:30 UTC — chantier 2b TERMINÉ). Il ne touche
+  **jamais** aux colonnes qu'il ne possède pas : le module 4 pourra ajouter
+  les siennes sans risque.
 
 ### 3.2 La règle de vérité
 
@@ -324,11 +535,12 @@ ETAT-PROJET §10 point 11) :
 
 | Rang | Module | Pourquoi |
 |---|---|---|
-| ✅ | **Liste Soldes (§3)** | **FAIT (12/7)** — le socle de données des modules 2, 4 et 5. |
-| **1** | **File de lettrage (3)** | Sans paiements correctement imputés, **ni les statuts ni les rappels ne sont fiables**. Tout le reste en dépend. |
-| **2** | **Moteur de rappels (4)** | Le cœur métier du recouvrement — ajoute ses colonnes d'escalade à Soldes. |
+| ✅ | **Liste Soldes (§3)** | **FAIT (12/7)** — le socle de données des modules 2, 4 et 5. Synchro nocturne automatique depuis le 16/7. |
+| **1** | **File de lettrage (3)** | Sans paiements correctement imputés, **ni les statuts ni les rappels ne sont fiables**. Tout le reste en dépend — c'est aussi la source du garde-fou de fraîcheur du module 4. |
+| **2** | **Moteur de rappels (4)** | Le cœur métier du recouvrement — entièrement spécifié depuis le 16/7. Marche 1 du publipostage dans sa v1. |
 | **3** | **Contrôle BCSS (5)** | Première échéance réelle : **~15 août** pour le T2. |
 | — | Fiche 360° (2) et tableau de bord (1) | Se construisent naturellement **au fil** des trois précédents (ils en sont largement la vue de lecture). |
+| — | Supervision des inscriptions (7) | Petit, faible risque (lecture + gestes idempotents) — à glisser opportunément ; sa liste Journal-Inscriptions est un chantier du dépôt PORTAIL, planifiable indépendamment. |
 
 **Alternative défendable** : commencer par la **fiche dossier 360°** — lecture
 seule (donc sans risque), valeur immédiate, banc d'essai de la couche de
@@ -342,10 +554,11 @@ données de l'app staff (branchement de Soldes + Residents List via
 **Métier :**
 1. **Seuil d'écart BCSS** : quelle valeur (en % ? en € ? les deux ?) ? Qui
    l'arbitre ? Est-il révisable chaque année avec la grille Jobat ?
-2. **Délais du circuit de rappels** : combien de jours entre l'échéance et le
-   rappel 1 ? Entre rappel 1 et rappel 2 ? Avant la mise en demeure ?
-3. **Qui valide une mise en demeure ?** Un gestionnaire seul, ou une
-   validation hiérarchique ? (Impacte le modèle de rôles du module 6.)
+2. ✅ ~~Délais du circuit de rappels~~ **TRANCHÉ le 16/7** (voir module 4.1) —
+   **reste ouvert : le délai mise en demeure → contentieux.**
+3. ✅ ~~Qui valide une mise en demeure ?~~ **TRANCHÉ le 16/7 : le chef de
+   service**, individuellement, dossier par dossier. Impact acté sur le modèle
+   de rôles (module 6).
 4. **Imputation FIFO** : la convention « le paiement sans communication
    structurée apure la dette la plus ancienne » doit être **validée
    juridiquement** (§5.12).
@@ -357,22 +570,32 @@ données de l'app staff (branchement de Soldes + Residents List via
    la met à jour chaque année ?
 7. **Format du fichier BCSS** : structure exacte, fréquence, canal de
    transmission.
+8. **(nouveau 16/7) Plan d'apurement** : contenu des plans standards (3 mois /
+   6 mois), qui l'accorde, conditions de rupture et de réintégration dans le
+   circuit — conception ultérieure (module 4.6).
+9. **(nouveau 16/7) Seuils du garde-fou de fraîcheur** (module 4.4) : taille
+   maximale de la file « À traiter », âge maximal du dernier import CSV.
+10. **(nouveau 16/7) Délai de la relance automatique `InviteNotAccepted`**
+    (module 7) : après combien de jours sans acceptation ? Combien de
+    relances maximum ?
 
 **Technique / gouvernance :**
-8. **Droits SharePoint des collaborateurs** : un groupe de sécurité dédié est
-   nécessaire (l'app staff lit sous l'identité de l'utilisateur, pas sous une
-   identité applicative). NB : ce groupe devra couvrir la liste **Soldes**.
-9. **Licences Premium** : combien de collaborateurs ? (Le plan Développeur
-   actuel est individuel et interdit en production.)
-10. **Décision base de données** : ✅ **levée opérationnellement le 12/7**
+11. **Droits SharePoint des collaborateurs** : un groupe de sécurité dédié est
+    nécessaire (l'app staff lit sous l'identité de l'utilisateur, pas sous une
+    identité applicative). NB : ce groupe devra couvrir la liste **Soldes**
+    (et Journal-Inscriptions).
+12. **Licences Premium** : combien de collaborateurs ? (Le plan Développeur
+    actuel est individuel et interdit en production.)
+13. **Décision base de données** : ✅ **levée opérationnellement le 12/7**
     (liste Soldes) — plus rien ne bloque les modules. La migration **Azure
     SQL** reste la cible structurelle : **note d'arbitrage à rédiger** pour la
     hiérarchie (statu quo SharePoint+Soldes / Azure SQL / Dataverse écarté
-    sauf validation revendeur), avec les chiffres du 12/7 : ~2000
-    lignes/trimestre, ~8000/an, seuil des 5000 dépassé en un an, discipline
-    d'index comme coût récurrent. Décision de confort, pas d'urgence — mais
-    plus la liste grossit, plus la reprise sera longue.
-11. **Listes « KB-Cumul Archives \<année\> » du tenant Fedasil** : instruire
+    sauf validation revendeur), avec les chiffres du 13/7 : ~2000
+    lignes/trimestre, ~24 000 lignes/an pour KB-Paiements (premier candidat),
+    seuil des 5000, discipline d'index comme coût récurrent. Décision de
+    confort, pas d'urgence — mais plus la liste grossit, plus la reprise sera
+    longue.
+14. **Listes « KB-Cumul Archives \<année\> » du tenant Fedasil** : instruire
     leur devenir à la transposition (voir §3.4).
 
 ---
@@ -389,9 +612,17 @@ Hérités du portail résident, et enrichis au fil des sessions :
   distinctive systématique). Charte Fedasil : **rouge (#d1103b) réservé à
   l'attention/erreur**, jamais décoratif ; **violet (#644391)** pour
   l'interactif.
-- **Rien d'irréversible sans validation humaine** — surtout pour les envois de
-  courriers et les régularisations.
-- **Tout ce qui touche à l'argent est tracé** (auteur, date, montant, motif).
+- **(AMENDÉ le 16/7) L'automatisation est graduée par l'enjeu ; rien
+  d'IRRÉVERSIBLE ne part sans validation humaine.** Formulation d'origine
+  (12/7) : « rien d'irréversible sans validation humaine — surtout pour les
+  envois de courriers et les régularisations ». L'amendement autorise
+  l'automatisation des gestes à faible enjeu, réversibles et journalisés
+  (rappel 1 par e-mail, relance d'invitation), toujours dotés d'un
+  interrupteur global dans `Config`. Les lots (rappel 2) exigent une
+  validation d'un clic ; les actes juridiques (mise en demeure) une
+  validation individuelle par le chef de service.
+- **Tout ce qui touche à l'argent est tracé** (auteur, date, montant, motif) —
+  y compris les envois automatiques (journalisés « système »).
 - **Contrôle par exception** : ne jamais imposer au collaborateur de relire ce
   qui est conforme.
 - **(12/7) Codes techniques neutres, l'interface traduit.** Le public staff
@@ -401,12 +632,21 @@ Hérités du portail résident, et enrichis au fil des sessions :
   rétroactivement, au `Status` de KB-Paiements lors du module 3).
 - **(12/7) Discipline SharePoint « 5000 »** — servitude d'architecture de la
   couche données, à respecter par tout écran et tout flux :
-  1. toute requête filtrée commence par une **colonne indexée** ;
+  1. toute requête filtrée commence par une **colonne indexée** — ⚠ rappel
+     durci le 13/7 (état projet §6.1) : Graph refuse IMMÉDIATEMENT un
+     `$filter` sur colonne non indexée, quelle que soit la taille de la
+     liste ;
+  1-bis. **être indexée ne suffit pas** *(14/7)* : la PREMIÈRE clause d'un
+     filtre composé doit elle-même ramener moins de 5000 lignes (`Year eq
+     2026` ≈ 8000 lignes → 400 malgré l'index ; `YearMonth eq 202604` ≈ 1700
+     lignes → OK, pour toujours) ;
   2. le **résultat** de chaque requête reste sous 5000 lignes → filtres
-     **composés** (`Year+Quarter`, `PayStatus+Year`, `YearMonth`), jamais de
-     filtre « qui grossit avec les années » seul ;
-  3. les **agrégats se précalculent** (Power Automate nocturne → liste
-     « Indicateurs »), ils ne se recalculent pas à l'écran ;
+     **composés** (`PayStatus+YearMonth`, `YearMonth`), jamais de filtre
+     « qui grossit avec les années » seul ;
+  3. les **agrégats se précalculent** (traitement nocturne → liste
+     « Indicateurs »), ils ne se recalculent pas à l'écran — y compris les
+     requêtes par ABSENCE (« qui n'a pas déclaré »), impossibles en
+     `$filter` ;
   4. attention aux **limites de délégation** du connecteur SharePoint de
      Power Apps : une requête non délégable tronque silencieusement ;
   5. les traitements de fond peuvent balayer en **lecture paginée sans
@@ -415,7 +655,13 @@ Hérités du portail résident, et enrichis au fil des sessions :
   (`sharepoint-schema.json`), provisioning, rotation, synchronisation Soldes :
   tout l'outillage des listes partagées appartient au dépôt du portail (qui
   détient les identifiants Graph). Le dépôt `residentapp-staff` ne fait que
-  consommer les listes via ses connecteurs.
+  consommer les listes via ses connecteurs. S'applique à la future liste
+  **Journal-Inscriptions** (module 7) et aux **colonnes du module 4** sur
+  Soldes.
+- **(16/7) Les paramètres d'exploitation vivent dans la liste `Config`**, pas
+  dans le code : interrupteurs d'automatisation (rappel 1, relance
+  d'invitation), seuils du garde-fou de fraîcheur. Modifiables sans
+  redéploiement, à l'image de `ActiveQuarter` (état projet §5.21).
 
 ---
 
@@ -423,12 +669,41 @@ Hérités du portail résident, et enrichis au fil des sessions :
 
 | Date | Décision |
 |---|---|
-| **13/7/2026** | **Jeu de données de simulation** créé sur le site de test (`npm run sp:seed`) : 1 845 résidents, ~14 800 déclarations, 20 113 lignes Soldes, 7 456 virements, + fixtures BCSS du module 5 (5 CSV + clé de correction). Les 6 modules peuvent désormais se développer contre des données vivantes. |
+| **16/7/2026** | **Cadence du circuit de recouvrement TRANCHÉE** : rappel 1 à l'échéance dépassée (e-mail, automatique) ; rappel 2 à échéance + 1 mois (e-mail toujours, lot nocturne validé d'un clic) ; mise en demeure à rappel 2 + 15 jours (recommandé papier, **validation individuelle par le chef de service**). Délai MD → contentieux : à définir. |
+| **16/7/2026** | **Granularité de l'escalade TRANCHÉE** : traçabilité par MOIS (colonnes sur chaque ligne Soldes — preuve juridique par créance), courrier par DOSSIER (un envoi regroupe tous les mois du FA au même niveau). On ne saute jamais d'étape pour une créance donnée. Le « niveau du dossier » est dérivé (max des mois), jamais stocké. |
+| **16/7/2026** | **Compromis d'automatisation gradué** (amende le principe du 12/7) : automatique = faible enjeu + réversible + journalisé + interrupteur `Config` (rappel 1, relance d'invitation) ; lot validé d'un clic (rappel 2) ; validation individuelle (mise en demeure). Garde-fou de fraîcheur non négociable : pas de rappel si la file de lettrage déborde ou si l'import CSV est trop ancien (seuils dans `Config`). |
+| **16/7/2026** | **Publipostage des mises en demeure piloté depuis l'app, en 3 marches** : (1) génération de l'Excel du publipostage Word existant (SheetJS, cible v1) ; (2) génération des lettres par Power Automate + Word Online Business → PDF archivés dans une bibliothèque SharePoint (cible module 4) ; (3) recommandé électronique bpost (backlog). |
+| **16/7/2026** | **Plan d'apurement = état suspensif de la machine à états** : un dossier sous plan sort automatiquement du circuit de rappels. Plans standards envisagés 3/6 mois ; conception ultérieure ; le provisioning du module 4 réserve la place. |
+| **16/7/2026** | **Module 7 « Supervision des inscriptions » créé** (périmètre validé) : supervision, PAS validation — la pré-inscription reste entièrement automatique. Taxonomie de codes neutres, gestes de remédiation, relance automatique `InviteNotAccepted` (graduée), liste **Journal-Inscriptions** à écrire par `Subscription.ts` (dépôt portail) avec NN/e-mail MASQUÉS pour les tentatives inéligibles. |
+| **16/7/2026** | **L'automatisation du module 4 vit dans la Function App `residentapp-soldes-timer`** (second timer après la synchro Soldes, réutilise le `sendMail` Graph des invitations) — pas dans la Code App (frontend sous identité utilisateur), pas dans GitHub Actions (secret Graph refusé chez GitHub, état projet §10.11). |
+| **13/7/2026** | **Jeu de données de simulation** créé sur le site de test (`npm run sp:seed`) : 1 845 résidents, ~14 800 déclarations, 20 113 lignes Soldes, 7 456 virements, + fixtures BCSS du module 5 (5 CSV + clé de correction). Les modules peuvent désormais se développer contre des données vivantes. |
 | **13/7/2026** | **Index SharePoint posés** sur toutes les listes du site de test ; header `HonorNonIndexedQueriesWarningMayFailRandomly` RETIRÉ du code (fail fast). ⚠ En production : **index AVANT déploiement du code**, sans exception. |
 | **13/7/2026** | **Volume de référence établi** : ~1 700 déclarations/mois observées, **~2 000 retenues pour le dimensionnement**. → KB-Cumul ≈ 6 000 lignes/trimestre (franchit les 5 000 au 3ᵉ mois) ; **KB-Paiements ≈ 24 000 lignes/an sans jamais tourner → PREMIER candidat SQL**, avant les KB-Cumul. Chiffres à reprendre dans la note d'arbitrage. |
-| **13/7/2026** | **Bascule trimestrielle automatique — option B retenue** : liste `Config` (trimestre actif + année) écrite par `sp:rotate` en fin de rotation, lue par le code avec cache + repli. Option « déduire du calendrier » ÉCARTÉE : la bascule doit suivre la ROTATION, pas la DATE (sinon données vieilles d'un an affichées tant que la rotation n'a pas tourné). `Config` deviendra la **source de vérité partagée** entre portail et app staff. *Cadré, non commencé.* |
-| **13/7/2026** | **Historique multi-trimestres résident** (≥ 4 trimestres, courant compris) : trimestre COURANT lu dans KB-Cumul (fraîcheur), trimestres ANTÉRIEURS lus dans **Soldes** (permanence). Confirme le rôle de Soldes comme mémoire. *Cadré, non commencé — à faire APRÈS le chantier `Config`.* |
-| 12/7/2026 | **§3 tranchée** : liste « Soldes » (granularité mois, photo complète) créée et synchronisée sur le tenant de test (ID `610bf274-1738-4323-af0a-8c108945a1d9`) ; règle de vérité KB-Cumul ↔ Soldes ; migration Azure SQL différée sans blocage (note d'arbitrage à rédiger — §5 point 10). |
+| **13/7/2026** | **Bascule trimestrielle automatique — option B retenue** : liste `Config` (trimestre actif + année) écrite par `sp:rotate` en fin de rotation, lue par le code avec cache + repli. Option « déduire du calendrier » ÉCARTÉE : la bascule doit suivre la ROTATION, pas la DATE. `Config` est la **source de vérité partagée** entre portail et app staff. *(Réalisé le 13/7 au soir — état projet §5.21.)* |
+| **13/7/2026** | **Historique multi-trimestres résident** (4 trimestres, courant compris) : trimestre COURANT lu dans KB-Cumul (fraîcheur), trimestres ANTÉRIEURS lus dans **Soldes** (permanence). Confirme le rôle de Soldes comme mémoire. *(Réalisé le 14/7 — état projet §5.22.)* |
+| 12/7/2026 | **§3 tranchée** : liste « Soldes » (granularité mois, photo complète) créée et synchronisée sur le tenant de test (ID `610bf274-1738-4323-af0a-8c108945a1d9`) ; règle de vérité KB-Cumul ↔ Soldes ; migration Azure SQL différée sans blocage (note d'arbitrage à rédiger — §5 point 13). |
 | 12/7/2026 | **Codes techniques neutres** pour toutes les valeurs stockées (`PayStatus` = `Paid`/`Partial`/`Unpaid`) ; la traduction FR/NL est une affaire d'affichage. |
 | 12/7/2026 | **Discipline « 5000 »** érigée en principe de conception (index, filtres composés, `YearMonth`, agrégats précalculés, vigilance délégation). |
-| 12/7/2026 | Colonnes de la **machine à états (module 4)** : à ajouter à Soldes par provisioning lors du module 4 (protégées de `sp:soldes`) ; granularité escalade (mois vs dossier) à trancher alors. |
+| 12/7/2026 | Colonnes de la **machine à états (module 4)** : à ajouter à Soldes par provisioning lors du module 4 (protégées de `sp:soldes`) ; ~~granularité escalade (mois vs dossier) à trancher alors~~ → **tranchée le 16/7** (voir ci-dessus). |
+
+---
+
+## 8. Prompt de relance (à coller au début de la prochaine discussion staff)
+
+> Je poursuis l'application staff ResidentApp-Staff (Power Apps Code App,
+> React + TypeScript + Vite, SharePoint via connecteurs, identité du
+> collaborateur connecté). Lis d'abord `CONCEPTION-STAFF-APP.md` **v3 du
+> 16/7/2026** (sept modules ; module 4 entièrement spécifié : cadence datée,
+> granularité mois/dossier, compromis d'automatisation gradué, publipostage
+> en 3 marches, garde-fou de fraîcheur ; module 7 supervision des
+> inscriptions) et `SETUP-STAFF-APP-PowerApps.md` (toolchain opérationnelle :
+> pac CLI, environnement développeur, connexion SharePoint établie, projet
+> scaffoldé). L'état des données est dans `ETAT-PROJET-ResidentApp.md` (v12+ :
+> liste Soldes synchronisée chaque nuit par la Function App
+> `residentapp-soldes-timer`, liste Config = source de vérité du trimestre
+> actif, jeu de simulation complet `sp:seed` sur le site de test).
+> Ordre des chantiers : **module 3 (lettrage) d'abord** — sans lui les
+> rappels mentent —, puis module 4. Je suis débutant confirmé : fichiers
+> complets copier-coller prêts, pas-à-pas pour Azure/Entra/Power Platform,
+> messages de commit fournis (un seul commit), `npm run build` racine + `api/`
+> avant tout push.
