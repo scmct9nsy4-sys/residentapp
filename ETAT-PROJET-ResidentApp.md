@@ -1,5 +1,7 @@
 # ÉTAT DU PROJET — ResidentApp (Fedasil)
 
+**Version 13 — 16 juillet 2026, nuit** (remplace la v12 du même jour — session « fiche 360° staff enrichie + module 3 lettrage » : espace des communications structurées formalisé en trois familles (§5.12), colonne `Status` de KB-Paiements migrée vers les codes neutres par le nouveau script `sp:paiements-status` (§5.17), premières ÉCRITURES de l'app staff (imputation — voir CONCEPTION-STAFF-APP v5). Historique v12 ci-dessous.)
+
 **Version 12 — 16 juillet 2026** (remplace la v11 du 14/7 — session « déploiement du timer Soldes » : le chantier 2b est TERMINÉ, la Function nocturne tourne sur le tenant de test. Voir §5.20.1 et le nouveau `soldes-timer/README-SOLDES-TIMER.md`. Historique v11 ci-dessous.)
 
 **Version 11 — 14 juillet 2026 (soir)** (remplace la v10 du même jour — session
@@ -260,11 +262,25 @@ EPC069-12) généré côté client (`qrcode` npm) ; communication belge `+++…+
 remittance non structurée (reconnue par les apps belges, testé avec ING).
 Échéance, statuts colorés, accès au paiement et montant libre : voir §5.18.
 
-### 5.12 Imputation (processus cible, non codé)
+### 5.12 Imputation (règles cadrées le 16/7/2026 — codées côté app staff, module 3)
 
-(1) Communication structurée valide → mois désigné ; (2) sinon → dette la plus
-ancienne (FIFO, convention belge à valider juridiquement). Idée retenue :
-préfixe réservé (ex. `9T0`) pour les communications d'apurement d'arriérés.
+(1) Communication structurée valide → la période désignée ; (2) sinon → dette
+la plus ancienne (FIFO, convention belge à valider juridiquement).
+
+**L'espace des communications structurées est organisé en TROIS FAMILLES**
+(détail : CONCEPTION-STAFF-APP.md §4.12) :
+
+| Préfixe | Signification | Imputation |
+|---|---|---|
+| `01`-`12` | le mois M (QR du portail — inchangé) | le mois désigné |
+| `91`-`94` (« 9T0 ») | solde du trimestre T | FIFO au sein du trimestre |
+| `99` (« 990 ») | apurement global (mises en demeure, dettes hors fenêtre) | FIFO toute ancienneté — insensible à l'année PAR CONSTRUCTION |
+
+Le portail ne change pas ; le modulo 97 (§5.10) vaut pour tout préfixe. Côté
+staff : la fiche 360° GÉNÈRE les `9T0` ; le lettrage (module 3) DÉCODE les
+trois familles et écrit selon la règle de vérité §5.20 (trimestre courant →
+KB-Cumul champ `Paid` seul, `sp:soldes` resynchronise ; trimestre clôturé →
+Soldes avec `Balance`/`PayStatus` recalculés par LES MÊMES règles).
 
 ### 5.13 Aidants (assistantes sociales) — dérivé du cas famille
 
@@ -391,6 +407,17 @@ outillée : `PROCEDURE-BASCULE-TRIMESTRE.md` (v3) + `npm run sp:rotate` (§7).
   acquises). Depuis le 12/7, les impayés d'un trimestre vidé **survivent dans
   la liste « Soldes »** (règle de vérité §5.20) ; l'archive JSON/CSV reste la
   sauvegarde brute.
+
+**Codes neutres pour `Status` (16/7/2026, préalable du module 3 staff).** Les
+valeurs françaises historiques (`À traiter` / `Imputé` / `Anomalie`) sont
+migrées vers **`ToProcess` / `Imputed` / `Anomaly`** (principe « codes
+techniques neutres, l'interface traduit ») par **`npm run
+sp:paiements-status`** (`scripts/migrate-paiements-status.ts`, `--dry-run`,
+idempotent) : élargit la colonne choice à l'union, réécrit en balayage paginé
+sans filtre, resserre sur les trois codes. Exécuté le 16/7 sur le site de
+test (7 456 lignes). `sharepoint-schema.json` porte les codes neutres ; l'app
+staff tolère les deux écritures. ⚠ Tenant Fedasil : `sp:inspect` et
+alignement du schéma AVANT toute exécution là-bas.
 
 ### 5.18 Échéance et statuts de paiement (confirmé le 10/7/2026)
 

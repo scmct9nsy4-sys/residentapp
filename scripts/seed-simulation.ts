@@ -491,7 +491,7 @@ type SimPayment = {
   counterpartyIban: string;
   fa: string; // vide si non imputé
   month: number | null;
-  status: "À traiter" | "Imputé" | "Anomalie";
+  status: "ToProcess" | "Imputed" | "Anomaly";
 };
 
 type SimMonth = {

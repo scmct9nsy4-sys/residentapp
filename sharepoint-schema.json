@@ -301,12 +301,11 @@
           "name": "Status",
           "type": "choice",
           "choices": [
-            "À traiter",
-            "Imputé",
-            "Anomalie"
+            "ToProcess",
+            "Imputed",
+            "Anomaly"
           ],
-          "note": "État du lettrage : « À traiter » à l'import ; « Imputé » quand reporté dans Paid (KB-Cumul) ; « Anomalie » si irrésoluble (comm invalide, montant incohérent…).",
-          "indexed": true
+          "note": "État du lettrage — CODES TECHNIQUES NEUTRES (principe §6 staff : l'interface traduit, la donnée ne porte aucune langue) : ToProcess à l'import ; Imputed quand reporté dans Paid ; Anomaly si irrésoluble (comm invalide, montant incohérent…). ⚠ Valeurs françaises historiques (À traiter / Imputé / Anomalie) migrées par « npm run sp:paiements-status » — sp:provision ne modifie jamais une colonne existante."
         }
       ]
     },
