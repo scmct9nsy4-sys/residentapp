@@ -1,5 +1,12 @@
 # ÉTAT DU PROJET — ResidentApp (Fedasil)
 
+**Version 14 — 17 juillet 2026** (remplace la v13 — session « validation
+du module 3 staff (lettrage) en usage réel » : 6 scénarios verts ; 4 bugs
+staff corrigés dont l'écriture des colonnes Choice via `{ Value }` — voir
+SETUP-STAFF-APP pièges n°14/15 et CONCEPTION-STAFF-APP v6. Aucune modif du
+portail cette session ; le préalable codes neutres `Status` (§5.17) est
+confirmé validé de bout en bout. Historique v13 ci-dessous.)
+
 **Version 13 — 16 juillet 2026, nuit** (remplace la v12 du même jour — session « fiche 360° staff enrichie + module 3 lettrage » : espace des communications structurées formalisé en trois familles (§5.12), colonne `Status` de KB-Paiements migrée vers les codes neutres par le nouveau script `sp:paiements-status` (§5.17), premières ÉCRITURES de l'app staff (imputation — voir CONCEPTION-STAFF-APP v5). Historique v12 ci-dessous.)
 
 **Version 12 — 16 juillet 2026** (remplace la v11 du 14/7 — session « déploiement du timer Soldes » : le chantier 2b est TERMINÉ, la Function nocturne tourne sur le tenant de test. Voir §5.20.1 et le nouveau `soldes-timer/README-SOLDES-TIMER.md`. Historique v11 ci-dessous.)
@@ -418,6 +425,15 @@ sans filtre, resserre sur les trois codes. Exécuté le 16/7 sur le site de
 test (7 456 lignes). `sharepoint-schema.json` porte les codes neutres ; l'app
 staff tolère les deux écritures. ⚠ Tenant Fedasil : `sp:inspect` et
 alignement du schéma AVANT toute exécution là-bas.
+
+**Validé de bout en bout (17/7/2026).** L'app staff écrit `Status` (Imputed
+/ Anomaly) et `PayStatus` (Soldes) via l'objet Choice `{ Value: "..." }` —
+jamais une chaîne nue (qui vide la colonne), jamais par `Status#Id` (Id
+dépendant du tenant). La lecture tolère toujours les libellés FR historiques
+ET les codes neutres. Contre-épreuve `sp:soldes --dry-run` après imputation
+d'un mois courant : exactement 1 update (la ligne Soldes rattrape le `Paid`
+écrit en KB-Cumul) — l'app staff et la synchro nocturne parlent la même
+langue.
 
 ### 5.18 Échéance et statuts de paiement (confirmé le 10/7/2026)
 
