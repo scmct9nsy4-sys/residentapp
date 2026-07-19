@@ -1,13 +1,15 @@
 # PROCÉDURE — Bascule trimestrielle des listes KB-Cumul
 
 **ResidentApp (Fedasil)** · document d'exploitation · à dérouler à chaque
-clôture de trimestre. **Mise à jour du 14/7/2026 (v4) : `npm run sp:soldes --
---auto` ABSORBE la synchronisation** — la même commande, avant et après la
-bascule, sans jamais taper une année. Elle a été validée par une **répétition
-générale complète** sur le site de test (14/7 au soir). *(v3 du 13/7 : bascule
-AUTOMATIQUE via la liste « Config » — les étapes « modifier les variables de la
-Static Web App » et « redéployer » ont DISPARU. v2 du 12/7 : intégration de la
-liste « Soldes ».)*
+clôture de trimestre. **Mise à jour du 19/7/2026 (v5) : étape A0 — la FILE DE
+LETTRAGE doit être VIDE avant toute bascule** (une communication structurée
+encode le mois sans l'année : son sens change à la rotation). *(v4 du 14/7 :
+`npm run sp:soldes -- --auto` absorbe la synchronisation — la même commande,
+avant et après la bascule, sans jamais taper une année ; validée par une
+répétition générale complète sur le site de test. v3 du 13/7 : bascule
+automatique via la liste « Config » — les étapes « modifier les variables de
+la Static Web App » et « redéployer » ont disparu. v2 du 12/7 : intégration
+de la liste « Soldes ».)*
 
 > **Principe.** L'application repose sur 4 listes SharePoint **permanentes**
 > (KB-Cumul T1..T4) aux **ID fixes**, réutilisées chaque année : à la bascule,
@@ -100,6 +102,30 @@ Relevé avec `npm run sp:provision` (qui affiche l'ID de chaque liste).
 > Config, sans ressaisie manuelle.
 
 ## 3. Checklist de bascule (exemple : 1er novembre, T3 → T4)
+
+### A0. 🔴 VIDER LA FILE DE LETTRAGE — le sens des communications change à la bascule
+
+> Une communication structurée encode le MOIS mais pas l'année (§5.22). AVANT
+> la bascule, un virement « ToProcess » portant un mois de la liste qui va
+> être vidée (dans l'exemple : 10-12, donc octobre-décembre de l'AN DERNIER)
+> s'impute encore au bon endroit. APRÈS la bascule, le même préfixe désignera
+> ces mêmes mois de l'ANNÉE EN COURS (liste fraîchement vidée) : dès les
+> premières déclarations du nouveau trimestre, une re-tentative imputerait le
+> vieux virement sur le MAUVAIS mois — silencieusement, montants exacts,
+> statut « Imputed ». **La file doit donc être VIDE au moment du `BASCULER`.**
+> *(Discipline née de l'écriture de `sp:paiements`, 18-19/7/2026.)*
+
+- [ ] `npm run sp:paiements -- --retenter-seulement` — dernière chance donnée
+      aux virements en attente d'une déclaration (arrivée entre-temps = ils
+      s'imputent tout seuls).
+- [ ] App staff → onglet **Lettrage** : traiter À LA MAIN ce qui reste —
+      imputer (plan manuel si besoin), ou passer en **anomalie** ce qui est
+      irrésoluble. **Objectif : file vide.**
+- [ ] Contrôle : la file de lettrage n'affiche plus AUCUN virement (ou, dans
+      SharePoint : KB-Paiements, filtre `Status = ToProcess` → 0 élément).
+
+> L'ordre A0 → A n'est pas un hasard : les imputations de A0 mettent `Paid` à
+> jour — la photographie de l'étape A doit venir APRÈS.
 
 ### A. 🔴 SYNCHRONISER SOLDES — AVANT TOUTE DESTRUCTION
 
@@ -301,11 +327,13 @@ variables d'une SWA exige un redéploiement pour être pris en compte).
 - **L'archive JSON fait foi** (types fidèles) ; le CSV (séparateur `;`,
   encodage Excel) est un confort de consultation.
 - Une **communication structurée** encode le mois mais pas l'année : un
-  virement tardif arrivant après la bascule concerne un mois désormais dans
-  Soldes (`Year` explicite) — imputation manuelle (processus cible §5.12 de
-  la doc d'état). ⚠ **C'est aussi ce qui plafonne la fenêtre du résident à
-  4 trimestres** (`HISTORY_QUARTERS`, §5.22) : au 5ᵉ, deux mois d'avril
-  porteraient la même communication.
+  virement tardif arrivant APRÈS la bascule pour un mois sorti de la fenêtre
+  s'impute hors fenêtre (Soldes seul — règle de vérité corrigée du 18/7),
+  via la file de lettrage de l'app staff ou `sp:paiements`. Un virement resté
+  EN ATTENTE pendant la bascule, lui, CHANGE DE SENS — c'est la raison d'être
+  de l'étape A0 (file vide au `BASCULER`). ⚠ **C'est aussi ce qui plafonne la
+  fenêtre du résident à 4 trimestres** (`HISTORY_QUARTERS`, §5.22) : au 5ᵉ,
+  deux mois d'avril porteraient la même communication.
 
 ## 5. En cas de problème
 
@@ -343,6 +371,12 @@ variables d'une SWA exige un redéploiement pour être pris en compte).
   la seconde passe archive le reliquat puis achève le vidage).
 - **Synchronisation interrompue à mi-course** → sans gravité : relancer
   `npm run sp:soldes -- --auto` (upsert idempotent).
+- **Un virement « ToProcess » d'AVANT la bascule a été oublié dans la file**
+  (étape A0 sautée) → ne PAS laisser une re-tentative automatique le traiter :
+  son mois désigne désormais le nouveau trimestre. Le repérer par sa
+  `PaymentDate` (antérieure à la bascule = suspect), puis l'imputer À LA MAIN
+  dans l'app staff (plan manuel sur les bons mois, désormais hors fenêtre →
+  Soldes) ou le passer en anomalie.
 
 ## 6. Répétition générale (obligatoire AVANT la première bascule réelle)
 
