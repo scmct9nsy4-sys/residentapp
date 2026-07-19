@@ -26,8 +26,7 @@
           "name": "Title",
           "type": "text",
           "documentOnly": true,
-          "note": "Colonne intégrée SharePoint. Contient le NUMÉRO NATIONAL (SP_NATIONALID_FIELD=Title). À confirmer en ouvrant une ligne.",
-          "indexed": true
+          "note": "Colonne intégrée SharePoint. Contient le NUMÉRO NATIONAL (SP_NATIONALID_FIELD=Title). À confirmer en ouvrant une ligne."
         },
         {
           "name": "FirstName",
@@ -51,14 +50,12 @@
           "name": "FedasilNumber",
           "type": "text",
           "documentOnly": true,
-          "note": "Clé maîtresse (FA). Unique et permanente. Saisie par le staff.",
-          "indexed": true
+          "note": "Clé maîtresse (FA). Unique et permanente. Saisie par le staff."
         },
         {
           "name": "EntraOid",
           "type": "text",
-          "note": "SEULE colonne à créer. oid du compte invité Entra. Écrit par /api/pre-inscription (et auto-réparation dans /api/me et /api/declare). Plusieurs lignes peuvent porter le même oid (familles). Variable SP_RESIDENT_OID_FIELD=EntraOid.",
-          "indexed": true
+          "note": "SEULE colonne à créer. oid du compte invité Entra. Écrit par /api/pre-inscription (et auto-réparation dans /api/me et /api/declare). Plusieurs lignes peuvent porter le même oid (familles). Variable SP_RESIDENT_OID_FIELD=EntraOid."
         }
       ]
     },
@@ -87,8 +84,7 @@
           "name": "FedasilNumber",
           "type": "text",
           "documentOnly": true,
-          "note": "FA (type texte confirmé par sp:inspect -> SP_FA_IS_NUMBER reste false).",
-          "indexed": true
+          "note": "FA (type texte confirmé par sp:inspect -> SP_FA_IS_NUMBER reste false)."
         },
         {
           "name": "Month",
@@ -135,8 +131,7 @@
       "columns": [
         {
           "name": "FedasilNumber",
-          "type": "text",
-          "indexed": true
+          "type": "text"
         },
         {
           "name": "Month",
@@ -174,8 +169,7 @@
       "columns": [
         {
           "name": "FedasilNumber",
-          "type": "text",
-          "indexed": true
+          "type": "text"
         },
         {
           "name": "Month",
@@ -213,8 +207,7 @@
       "columns": [
         {
           "name": "FedasilNumber",
-          "type": "text",
-          "indexed": true
+          "type": "text"
         },
         {
           "name": "Month",
@@ -254,7 +247,7 @@
           "name": "Title",
           "type": "text",
           "documentOnly": true,
-          "note": "Colonne intégrée. Proposition : référence bancaire unique du mouvement (n° extrait/séquence) — clé d'idempotence des imports (pas de doublon si le même CSV est rejoué)."
+          "note": "Colonne intégrée. Référence bancaire unique du mouvement (« Ref. v/d verrichting » du CSV BNPPF, ex. C5J10XK0W00A03B4) — clé d'idempotence des imports (pas de doublon si le même CSV est rejoué)."
         },
         {
           "name": "PaymentDate",
@@ -289,8 +282,7 @@
         {
           "name": "FedasilNumber",
           "type": "text",
-          "note": "FA résolu après lettrage (vide tant que non imputé).",
-          "indexed": true
+          "note": "FA résolu après lettrage (vide tant que non imputé)."
         },
         {
           "name": "Month",
@@ -305,7 +297,17 @@
             "Imputed",
             "Anomaly"
           ],
-          "note": "État du lettrage — CODES TECHNIQUES NEUTRES (principe §6 staff : l'interface traduit, la donnée ne porte aucune langue) : ToProcess à l'import ; Imputed quand reporté dans Paid ; Anomaly si irrésoluble (comm invalide, montant incohérent…). ⚠ Valeurs françaises historiques (À traiter / Imputé / Anomalie) migrées par « npm run sp:paiements-status » — sp:provision ne modifie jamais une colonne existante."
+          "note": "État du lettrage — CODES TECHNIQUES NEUTRES depuis la migration sp:paiements-status (préalable du module 3 de l'app staff ; l'interface traduit, la donnée ne porte aucune langue) : « ToProcess » à l'import ; « Imputed » quand crédité dans Paid ; « Anomaly » si irrésoluble."
+        },
+        {
+          "name": "ImportFile",
+          "type": "text",
+          "note": "Nom du fichier CSV bancaire d'origine (traçabilité de l'import hebdomadaire sp:paiements — permet de vérifier qu'un fichier a été intégralement traité)."
+        },
+        {
+          "name": "BankSeq",
+          "type": "text",
+          "note": "« Nr v/d verrichting » du CSV bancaire (n° d'extrait séquentiel) — le langage commun avec l'équipe finance en cas de question sur un mouvement."
         }
       ]
     },
