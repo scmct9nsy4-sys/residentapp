@@ -247,7 +247,8 @@
           "name": "Title",
           "type": "text",
           "documentOnly": true,
-          "note": "Colonne intégrée. Référence bancaire unique du mouvement (« Ref. v/d verrichting » du CSV BNPPF, ex. C5J10XK0W00A03B4) — clé d'idempotence des imports (pas de doublon si le même CSV est rejoué)."
+          "indexed": true,
+          "note": "Colonne intégrée. Référence bancaire unique du mouvement (« Ref. v/d verrichting » du CSV BNPPF, ex. C5J10XK0W00A03B4) — clé d'idempotence des imports (pas de doublon si le même CSV est rejoué). INDEXÉE (posée le 19/7/2026, ~fenêtre unique avant les 5 000 éléments) : permettra des contrôles d'existence ciblés par référence quand la liste grossira."
         },
         {
           "name": "PaymentDate",
@@ -277,7 +278,8 @@
         {
           "name": "CounterpartyIBAN",
           "type": "text",
-          "note": "IBAN du donneur d'ordre (aide au lettrage manuel)."
+          "indexed": true,
+          "note": "IBAN du donneur d'ordre (aide au lettrage manuel). INDEXÉE (posée le 19/7/2026) : base des SUGGESTIONS de candidats par mémoire des imputations passées (un IBAN qui a toujours payé pour un FA est un excellent candidat — suggestion à confirmer par le staff, JAMAIS d'imputation automatique sur cette seule base : l'IBAN identifie le payeur, pas l'intention)."
         },
         {
           "name": "FedasilNumber",
