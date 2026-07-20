@@ -1,5 +1,31 @@
 # ÉTAT DU PROJET — ResidentApp (Fedasil)
 
+**Version 16 — 20 juillet 2026** (remplace la v15 — session « module 1
+staff : tableau de bord » : nouvelle liste **`Indicateurs`** (§5.23) —
+agrégats PRÉCALCULÉS chaque nuit par le timer nocturne (lib partagée
+`scripts/lib/indicateurs.ts` + CLI **`sp:indicateurs`**, §7.5), estampilles
+`LastPaymentImport` (fin d'`import-paiements.ts`, hors dry-run) et
+`LastSoldesSync` (timer). **Décision : le calcul vit dans le TIMER, PAS dans
+Power Automate** (amende la note du 12/7 de la conception staff). Côté
+staff : onglet **« Tableau de bord »** (vue par défaut) + ergonomie du
+lettrage (recherche locale, présélection depuis la fiche — CONCEPTION v8).
+Premier CYCLE NOCTURNE COMPLET validé (ComputedAt 03:30, 10 lignes).
+Incident du jour : la v15 de CE document n'avait jamais été committée et
+avait régressé en v14 dans le dépôt — restaurée depuis la photo du projet
+Claude (leçon §11sexies). Historique v15 ci-dessous.)
+
+**Version 15 — 19 juillet 2026** (remplace la v14 — sessions des 17-19/7
+« remplacement du flux Power Automate d'import des paiements » : nouveau
+script **`sp:paiements`** (§5.17 — résolution des communications libres,
+imputation automatique, WAL anti-double-crédit) ; colonnes
+`ImportFile`/`BankSeq` + index `Title`/`CounterpartyIBAN` sur KB-Paiements
+(§6.1, fenêtre unique) ; **règle de vérité CORRIGÉE (§5.20)** — un crédit sur
+trimestre clôturé de la fenêtre écrit KB-Cumul + reflet Soldes (l'écriture
+Soldes seule était DÉFAITE par la synchro nocturne ; validé par point fixe
+14 800 lignes) ; procédure de bascule **v5** (étape **A0** : file de lettrage
+vide) ; côté staff : suggestions du lettrage (SETUP v5, piège n°16 ;
+CONCEPTION v7 à produire). Historique v14 ci-dessous.)
+
 **Version 14 — 17 juillet 2026** (remplace la v13 — session « validation
 du module 3 staff (lettrage) en usage réel » : 6 scénarios verts ; 4 bugs
 staff corrigés dont l'écriture des colonnes Choice via `{ Value }` — voir
@@ -404,14 +430,19 @@ outillée : `PROCEDURE-BASCULE-TRIMESTRE.md` (v3) + `npm run sp:rotate` (§7).
   communications structurées** grâce au QR — le ratio devient mesurable.
 - Liste **KB-Paiements** (structure de TEST, à réconcilier avec la liste
   réelle Fedasil via `sp:inspect` à la reprise) : `Title` = référence bancaire
-  unique (clé d'**idempotence** des imports), `PaymentDate`, `Amount`,
+  unique (`Ref. v/d verrichting` du CSV BNPPF — clé d'**idempotence** des
+  imports, INDEXÉE depuis le 19/7), `PaymentDate`, `Amount`,
   `StructuredCom` / `FreeCom` (séparés : les libres = file du lettrage
-  manuel), `CounterpartyName/IBAN`, `FedasilNumber` + `Month` (résolus après
-  lettrage), `Status` (À traiter / Imputé / Anomalie).
-- **Lettrage cible** : lignes « À traiter » avec communication structurée
-  valide → décodage FA + mois (modulo 97 vérifiable) → addition dans `Paid` →
-  « Imputé ». Candidat idéal pour **Power Automate** (licences Premium
-  acquises). Depuis le 12/7, les impayés d'un trimestre vidé **survivent dans
+  manuel), `CounterpartyName/IBAN` (IBAN INDEXÉ depuis le 19/7 — mémoire des
+  imputations pour les suggestions du lettrage), `FedasilNumber` + `Month`
+  (résolus après lettrage), `Status` (codes neutres `ToProcess` / `Imputed` /
+  `Anomaly`), `ImportFile` + `BankSeq` (traçabilité de l'import, 17/7).
+- **Lettrage** : lignes « ToProcess » avec communication structurée valide →
+  décodage FA + mois (modulo 97 vérifiable) → addition dans `Paid` →
+  « Imputed ». Réalisé par **deux acteurs aux MÊMES règles** : le script
+  d'import **`sp:paiements`** (automatique, voir ci-dessous — le flux Power
+  Automate est REMPLACÉ) et la file de lettrage de l'app staff (manuel,
+  module 3). Depuis le 12/7, les impayés d'un trimestre vidé **survivent dans
   la liste « Soldes »** (règle de vérité §5.20) ; l'archive JSON/CSV reste la
   sauvegarde brute.
 
@@ -434,6 +465,30 @@ ET les codes neutres. Contre-épreuve `sp:soldes --dry-run` après imputation
 d'un mois courant : exactement 1 update (la ligne Soldes rattrape le `Paid`
 écrit en KB-Cumul) — l'app staff et la synchro nocturne parlent la même
 langue.
+
+**Import hebdomadaire `sp:paiements` (17-19/7/2026) — le flux Power Automate
+est REMPLACÉ.** `scripts/import-paiements.ts` traite les CSV bancaires du
+lundi (BNPPF, `;`, cp1252, pied « Totaal bedrag ») : exclusions JOURNALISÉES
+dans un rapport par fichier (pieds, débits — rien ne disparaît en silence),
+idempotence par la ref bancaire (`Title`), **résolution des communications**
+(flag `Y` REVALIDÉ intégralement — vu en réel : un mod 97 correct à préfixe
+hors familles ; flag `N` : fenêtre de 12 chiffres valide recopiée en
+communication libre → `StructuredCom` normalisée, la libre reste TELLE
+QUELLE), FA déduit du fa7 et vérifié dans Residents List (collision
+multi-FA → file), **imputation automatique** aux règles du module 3 (mois
+désigné / 9T0 FIFO trimestre / 990 FIFO global, plan consommé EXACTEMENT —
+trop-perçu → file), **re-tentative des `ToProcess` à chaque exécution** (une
+déclaration arrivée entre-temps débloque le virement toute seule), **WAL
+local anti-double-crédit** (`scripts/import-paiements.wal.jsonl`, gitignoré :
+un crash entre crédits et enregistrement met la ref en QUARANTAINE — jamais
+de double crédit), `--dry-run` à crédits simulés en mémoire,
+`--retenter-seulement`. Mesuré sur 3 semaines réelles (1 394 virements) :
+~91 % d'imputation automatique, ~42/semaine vers la file manuelle de l'app
+staff.
+🔴 **AVANT le premier import réel : DÉSACTIVER l'ancien flux Power Automate**
+(sinon flux ET script créditent le même CSV — l'idempotence du script ne
+protège pas d'un acteur parallèle), puis `--dry-run` et contrôler le compteur
+`doublon-ignoré` (preuve que l'idempotence enjambe l'historique du flux).
 
 ### 5.18 Échéance et statuts de paiement (confirmé le 10/7/2026)
 
@@ -482,11 +537,31 @@ les impayés), alimentée par **`npm run sp:soldes -- T2 2026`** (upsert
 idempotent depuis une liste KB-Cumul, clé `Title` = `<FA>-<année>-<mois>`,
 mode `--dry-run`, ne touche jamais aux colonnes qu'il ne possède pas).
 
-**Règle de vérité** : tant que la ligne KB-Cumul d'un mois existe (~9 mois
-après la clôture du trimestre), **KB-Cumul reste la source** (le portail la
-lit) et `sp:soldes` resynchronise (paiements tardifs) ; **après le vidage**
-de la liste trimestrielle, **Soldes est la seule vérité** (le lettrage y
-écrira directement).
+**Règle de vérité (CORRIGÉE le 18/7/2026)** : tant que la ligne KB-Cumul
+d'un mois existe (~9 mois après la clôture du trimestre), **KB-Cumul reste la
+source — pour les LECTURES ET pour les ÉCRITURES** ; après le vidage de la
+liste trimestrielle, **Soldes est la seule vérité**. Concrètement, un crédit
+de paiement s'écrit ainsi (`lettrage.ts` de l'app staff ET
+`import-paiements.ts`, mêmes règles) :
+
+| Le mois crédité est… | On écrit dans… |
+|---|---|
+| du trimestre **courant** | KB-Cumul active, `Paid` seul |
+| **clôturé mais DANS la fenêtre** des 4 trimestres | **KB-Cumul du trimestre** (`Paid`), **puis reflet** de la ligne Soldes (`Paid`+`Balance`+`PayStatus`) |
+| **hors fenêtre** (liste vidée) | Soldes seul |
+
+⚠ **Pourquoi la correction** : le module 3 validé le 17/7 écrivait Soldes
+SEUL pour tout trimestre clôturé — or `sp:soldes --auto` resynchronise
+KB-Cumul → Soldes pour les 4 listes chaque nuit : le crédit était DÉFAIT la
+nuit suivante (virement « Imputed », `Paid` revenu en arrière — invisible sur
+des jeux de test centrés sur le trimestre courant). Découvert le 18/7 en
+écrivant `sp:paiements`, corrigé dans les DEUX écritures, **validé le 19/7**
+par imputation réelle sur un mois de T1 clôturé puis
+`sp:soldes --auto --dry-run` → `0 créé, 0 mis à jour, 14 800 inchangés`
+(point fixe). Le reflet immédiat de Soldes donne la visibilité sans attendre
+la nuit ; la base de calcul est la ligne KB-Cumul RELUE au moment du geste
+(auto-guérison d'une dérive) ; si le reflet échoue, la synchro nocturne le
+reconstruit depuis KB-Cumul déjà crédité.
 
 Colonnes calculées à chaque sync : `Balance` (Contribution − Paid),
 `PayStatus` (**codes techniques neutres** `Paid`/`Partial`/`Unpaid` — le
@@ -669,6 +744,55 @@ tardif reste invisible sur les trimestres archivés.
 **`fedasil.css`** : une seule classe ajoutée, `.quarter-switch` (même vocabulaire
 visuel que `.lang-switch`).
 
+### 5.23 Liste « Indicateurs » — tableau de bord staff précalculé (créée le 20/7/2026)
+
+Module 1 de CONCEPTION-STAFF-APP (v8). SharePoint ne calcule **aucun agrégat
+côté serveur** (pas de SUM) et les requêtes par **ABSENCE** (« qui n'a pas
+déclaré ce trimestre ») sont impossibles en `$filter` : tout se précalcule la
+nuit, l'écran ne recalcule JAMAIS.
+
+- **Où vit le calcul** : `scripts/lib/indicateurs.ts` (dépôt portail — sans
+  `argv` ni `process.exit`, mêmes briques Graph que `soldes-sync.ts`),
+  exécuté par la Function `residentapp-soldes-timer` **juste après**
+  `syncAuto` (agrégats cohérents avec la photo Soldes de la même nuit), et à
+  la demande par `npm run sp:indicateurs` (§7.5). **PAS de Power Automate**
+  (décision du 20/7, amende la note du 12/7).
+- **Schéma** (famille de `Config` : minuscule, lue SANS `$filter`) : `Title`
+  = code neutre anglais, clé d'upsert ; `NumValue` ; `TextValue` ; `Scope`
+  (ex. « T2 2026 », « fenêtre T3 2025 → T2 2026 » — affiché tel quel,
+  précieux autour de la bascule) ; `ComputedAt` (CHAQUE ligne porte sa
+  propre fraîcheur) ; `Detail` (contexte lisible, jamais parsé).
+- **Neuf agrégats nocturnes** (balayages paginés SANS filtre — un traitement
+  de fond n'est pas soumis au seuil des 5 000) : `DeclaredResidents`,
+  `NotDeclaredResidents` (croisement Residents List × KB-Cumul active, en FA
+  **DISTINCTS** — les doublons de ligne ne comptent qu'une fois ; population
+  = toute la liste, décision GI 20/7 en attendant la consolidation des
+  désinscrits), `QuarterDueTotal`, `QuarterPaidTotal` (trimestre courant,
+  KB-Cumul active — règle de vérité §5.20), `OverdueTotal` / `OverdueMonths`
+  / `OverdueResidents` (Soldes : `Balance > 0` et `DueDate` dépassée,
+  fenêtre des 4 trimestres — l'assiette du recouvrement, module 4),
+  `OverdueOutOfWindowTotal` (dettes échues SORTIES de la fenêtre —
+  l'assiette des communications `990`), `StructuredComRateQuarter`
+  (virements datés du trimestre porteurs d'une communication structurée,
+  d'origine ou récupérée — l'adoption du QR).
+- **Deux estampilles — « chaque acteur estampille son propre passage »** :
+  `LastPaymentImport` écrite par `sp:paiements` en fin d'import RÉEL (jamais
+  en dry-run ; fichiers, volume, `reportSummary` dans `Detail`) ;
+  `LastSoldesSync` écrite par le timer après un `syncAuto` réussi. Toujours
+  sous try/catch : **une estampille qui échoue ne fait JAMAIS échouer le
+  traitement qu'elle documente** (même isolement pour le calcul : un échec
+  laisse le tableau de bord sur ses valeurs de la veille, sans marquer la
+  synchro « échouée » — l'erreur remonte dans Application Insights).
+- **L'exception voulue** : la FILE DE LETTRAGE se compte **EN DIRECT** à
+  l'écran staff (`Status` indexée, ~quelques centaines de lignes) — une
+  valeur de la veille ferait un garde-fou menteur.
+- **Côté staff** : `src/data/indicateurs.ts` (codes `INDICATOR` en **miroir
+  exact** de la lib portail — toute évolution se fait des DEUX côtés) +
+  `DashboardView.tsx` (vue par défaut). Un code absent s'affiche « — »,
+  jamais un zéro inventé ; seuil de péremption de la synchro : **26 h**
+  (bandeau d'alerte au-delà). Le futur garde-fou de fraîcheur du module 4
+  lira les MÊMES estampilles.
+
 ## 6. Données SharePoint
 
 ### 6.0 VOLUME DE RÉFÉRENCE (établi le 13/7/2026) — chiffre structurant
@@ -716,7 +840,7 @@ Index en place sur le site de test (`Resident_Test`) :
 |---|---|---|
 | **Residents List** | `EntraOid`, `FedasilNumber`, `Title` (NN) | `EntraOid` = **chemin critique du login** : `/api/me` résout l'identité par oid à CHAQUE connexion. `Title` = éligibilité par NN (`/api/pre-inscription`). |
 | **KB-Cumul T1–T4** | `FedasilNumber` | Lecture des déclarations d'UN résident (portail). |
-| **KB-Paiements** | `Status`, `FedasilNumber` | `Status` = LA requête du module 3 (file de lettrage). |
+| **KB-Paiements** | `Status`, `FedasilNumber`, `Title` *(19/7)*, `CounterpartyIBAN` *(19/7)* | `Status` = LA requête du module 3 (file de lettrage). `Title` (ref bancaire, idempotence) et `CounterpartyIBAN` (suggestions du lettrage par mémoire des imputations) posés le 19/7 dans la **FENÊTRE UNIQUE** : à ~465 virements/semaine, la liste franchit 5 000 éléments en ~3 mois — ensuite, plus d'index possible (règle 2). |
 | **Soldes** | `FedasilNumber`, `Year`, `Quarter`, `YearMonth`, `PayStatus` | Posées dès la création (§5.20). |
 
 Le schéma `sharepoint-schema.json` porte désormais `"indexed": true` sur ces
@@ -823,9 +947,9 @@ Pacifique américain, ce qui décale tous les affichages d'horodatage).
 
 La structure SharePoint est décrite dans le dépôt et appliquée en une commande.
 
-- **`sharepoint-schema.json`** (racine) : décrit les **8 listes** + colonnes
+- **`sharepoint-schema.json`** (racine) : décrit les **10 listes** + colonnes
   voulues (Residents List, ResidentApp Aidants, KB-Cumul T1..T4,
-  KB-Paiements, **Soldes**). `documentOnly: true` = colonne existante
+  KB-Paiements, **Soldes**, **Config**, **Indicateurs** — v16). `documentOnly: true` = colonne existante
   (vérifiée, jamais créée) ; les autres sont créées si absentes → le MÊME
   schéma vérifie le tenant Fedasil et provisionne un tenant de test vierge.
 - **`scripts/provision-sharepoint.ts`** : script idempotent, ne supprime/modifie
@@ -940,6 +1064,25 @@ et 401.
 ⚠ Le jeu actuel tourne à ~1 480 déclarations/mois (dérivé du réel). Pour un test
 de charge à l'**hypothèse de dimensionnement (2 000/mois, §6.0)**, il faudra
 ajuster la constante et purger/regénérer (backlog §10).
+
+### 7.5 `npm run sp:indicateurs` — indicateurs du tableau de bord (créé le 20/7/2026)
+
+Wrapper CLI de `scripts/lib/indicateurs.ts` (§5.23) — aucune règle métier
+dans le wrapper, même discipline que `snapshot-soldes.ts`.
+
+```bash
+npm run sp:indicateurs -- --dry-run   # ⭐ D'ABORD : prévisualise, n'écrit rien
+npm run sp:indicateurs                # calcule et upserte les 9 agrégats
+```
+
+- Trimestre actif et fenêtre lus dans `Config` : **rien à passer en
+  argument, jamais**. Upsert idempotent par `Title` — rejouable à volonté.
+- **Normalement inutile à la main** : le timer nocturne refait le calcul
+  chaque nuit après la synchro. À la main pour valider, ou pour rafraîchir
+  le tableau de bord sans attendre (après un lettrage massif, par exemple).
+- Le dry-run du 20/7 sur la simulation a bouclé l'arithmétique (1 253
+  déclarés + 592 sans déclaration = 1 845 FA distincts) et **révélé 61
+  lignes en doublon de FA** dans Residents List (voir backlog).
 
 ## 8. Configuration (variables d'environnement)
 
@@ -1072,6 +1215,40 @@ la CLI** (§7 vérifié en production). ⚠ Le timer ne vit PAS dans `api/` (SWA
 residentapp-soldes-timer --no-build --javascript` (l'extension VS Code expire au
 SyncTrigger sur Flex) ; ne JAMAIS poser `SCM_DO_BUILD_DURING_DEPLOYMENT` ni
 `ENABLE_ORYX_BUILD` (interdits sur Flex) ; Flex indisponible en Belgium Central.
+
+✅ **TERMINÉ (v15, 17-19/7) — Import des paiements `sp:paiements` + règle de
+vérité CORRIGÉE.** Le flux Power Automate est remplacé (§5.17) ; l'anomalie
+d'écriture des trimestres clôturés est corrigée et validée par point fixe
+(§5.20) ; colonnes `ImportFile`/`BankSeq` + index `Title`/`CounterpartyIBAN`
+(§6.1) ; procédure de bascule **v5** (étape **A0** : file de lettrage VIDE
+avant toute rotation — le sens d'une communication mensuelle change à la
+bascule) ; côté staff : correctif `lettrage.ts`/`cumul.ts` + suggestions du
+lettrage (mémoire IBAN + nom — SETUP v5, CONCEPTION v7 à produire).
+🔴 **OUVERT ET URGENT : désactiver l'ancien flux Power Automate AVANT le
+premier import réel** (§5.17). Backlog qualifié : rapprochement du « Totaal
+bedrag » dans le rapport d'import (preuve de complétude) ; écran Anomalies
+(app staff — le geste existe, aucun écran ne liste) ; procédure outillée des
+quarantaines WAL ; décisions métier trop-perçus et remboursements sortants ;
+automatisation du lundi (Function timer — le WAL devra alors migrer du poste
+local vers un stockage Azure) ; `appId: null` dans `power.config.json`
+(fichier régénéré — vérifier le prochain `pac code push`).
+
+✅ **TERMINÉ (v16, 20/7) — Module 1 staff : tableau de bord (indicateurs
+PRÉCALCULÉS).** Liste `Indicateurs` (§5.23) ; lib `scripts/lib/indicateurs.ts`
++ CLI `sp:indicateurs` (§7.5) ; séquence nocturne du timer enrichie
+(`syncAuto` → estampille `LastSoldesSync` → calcul, échecs ISOLÉS — jamais la
+synchro marquée échouée) ; estampille `LastPaymentImport` en fin
+d'`import-paiements.ts` ; côté staff : onglet « Tableau de bord » (vue par
+défaut), recherche locale dans la file de lettrage (montant / contrepartie /
+IBAN / communication — filtre mémoire, zéro appel SharePoint), bandeau « pas
+encore imputé » de la fiche CLIQUABLE → lettrage présélectionné avec
+défilement. Validé sur la simulation (arithmétique bouclée) ET par le premier
+CYCLE NOCTURNE COMPLET (10 lignes, ComputedAt 03:30). Backlog qualifié :
+message trop-perçu contextuel (quand aucun périmètre n'est possible pour le
+résident) ; éclatement d'`App.css` par écran (au-delà de ~1 500 lignes) ;
+**consolidation Residents List** (61 lignes en DOUBLON de FA détectées par le
+calcul + fusion de la liste des désinscrits — en attendant, population « sans
+déclaration » = toute la liste).
 
 ✅ **TERMINÉ (v9, 13/7 soir) — CHANTIER §10.0 : bascule automatique du
 trimestre** (liste `Config`, règle §5.21) : schéma, `sp:rotate` v2
@@ -1685,53 +1862,103 @@ fichiers du projet Claude. Le contrôle est le même et coûte 10 secondes :
 `grep -c "" <fichier>` + une chaîne caractéristique de la dernière session.
 **Tenir ces copies à jour fait partie de la clôture de session.**
 
+## 11sexies. Leçons de la session du 20/7 (module 1 — et le document jamais committé)
+
+### 1. La photo du projet Claude a SAUVÉ un document (le miroir du 14/7)
+
+Au moment de la clôture documentaire, le dépôt contenait l'ETAT-PROJET **v14**
+alors que le prompt de reprise citait la v15 : la v15, rédigée le 19/7, avait
+été synchronisée vers le projet Claude (`sync-projet-claude.sh`) **mais jamais
+committée**, puis les modifications locales ont été jetées. `git log` a rendu
+le verdict (dernier commit : v14) ; la photo du projet — 1 810 lignes — était
+l'UNIQUE survivante, et a servi de source de restauration.
+
+Leçon en deux temps : (1) **le rituel de fin de session committe le document
+AVANT (ou avec) la synchro vers le projet Claude** — une photo n'est pas une
+sauvegarde, c'est un sous-produit ; (2) le §11quater protège dans les DEUX
+sens : le 14/7 la photo était périmée et le dépôt avait raison ; le 20/7 le
+dépôt avait régressé et la photo avait raison. **Seule la COMPARAISON
+systématique (compteur + chaîne caractéristique) dit lequel des deux ment.**
+
+### 2. Un agrégat honnête doit BOUCLER — et c'est un détecteur d'anomalies gratuit
+
+Premier dry-run : 1 253 déclarés + 615 sans déclaration ≠ 1 906 « FA ». La
+population était comptée en LIGNES, pas en FA distincts : 61 doublons de FA
+dans Residents List (résidus de tests d'inscription) comptaient double. Après
+correction : 1 253 + 592 = 1 845 — exactement les résidents du `sp:seed`.
+Règle : **toute décomposition affichée doit sommer à son total, et le calcul
+vérifie l'identité lui-même** (le garde-fou « FA orphelins » — déclarés mais
+absents de Residents List — est né du même réflexe, gratuitement).
+
+### 3. Le troisième fossile de la migration Intel : npm/node dans `/usr/local/bin`
+
+Le build du timer a affiché un avertissement d'un npm préhistorique (« les
+versions supportées de Node sont 6, 8, 9, 10, 11, 12 ») : les commandes npm
+IMBRIQUÉES (`npm run clean` appelé par `npm run build`) résolvaient un
+`/usr/local/bin/npm` fossile de l'époque Intel, devant le couple nvm ARM.
+`which -a npm node` a montré les doublons ; suppression des trois fossiles
+(`npm`, `npx`, `node`). Même famille que le Homebrew Intel et le dotnet
+fantôme (SETUP staff §4) : **après une migration Intel → Apple Silicon,
+`which -a` sur CHAQUE outil de la chaîne, pas seulement sur celui qui vient
+de râler.**
+
+### 4. « Chaque acteur estampille son propre passage » — la fraîcheur est une DONNÉE
+
+Plutôt qu'un calcul qui DEVINE la date du dernier import en fouillant les
+lignes, chaque traitement écrit sa propre estampille en fin d'exécution
+réussie (`LastPaymentImport` par `sp:paiements`, `LastSoldesSync` par le
+timer) — jamais en dry-run (une répétition n'est pas un passage), toujours
+sous try/catch (le témoin ne doit jamais tuer le témoin). L'écran affiche ces
+dates au lieu de les promettre : la fraîcheur devient une donnée visible,
+avec un seuil d'alerte (26 h) défini dans la couche données, pas dans le
+composant. Le garde-fou du module 4 lira les MÊMES lignes.
+
 ## 12. Prompt de relance (à coller au début de la prochaine conversation)
 > Bonjour Claude. Je poursuis le développement de ResidentApp (portail Fedasil
 > pour résidents, React + TypeScript + CSS pur, Azure Static Web Apps +
 > Functions). CONTEXTE : tout l'état du projet est dans
-> ETAT-PROJET-ResidentApp.md (**v12 du 16 juillet 2026**) — lis-le
-> d'abord, en particulier **§5.20 + §5.20.1 (liste Soldes, cadence et
-> automatisation)**, **§5.21 (Config)**, **§5.22 (fenêtre de 4 trimestres)**,
-> **§6.1 (index — DEUX règles)** et **§11quater + §11quinquies (leçons)**.
+> ETAT-PROJET-ResidentApp.md (**v16 du 20 juillet 2026**) — lis-le d'abord,
+> en particulier **§5.17 (paiements + import `sp:paiements`)**, **§5.20
+> (règle de vérité CORRIGÉE + cadence)**, **§5.23 (liste `Indicateurs` —
+> tableau de bord staff précalculé)**, **§6.1 (index — DEUX règles + fenêtre
+> unique)**, **§7.5** et **§11quater à §11sexies (leçons)**.
 >
-> EN RÉSUMÉ : le parcours résident est validé de bout en bout. Le provisioning
-> est déclaratif (`sp:provision`, qui sert AUSSI d'audit d'index) ; la bascule
-> trimestrielle est automatique (liste `Config`) ; le résident consulte une
-> fenêtre de 4 trimestres (courant → KB-Cumul, antérieurs → Soldes) ; et
-> **`npm run sp:soldes -- --auto` synchronise les 4 listes en déduisant les
-> années de `Config`** — plus aucune année tapée à la main. **La répétition
-> générale de la bascule a été DÉROULÉE EN ENTIER sur le site de test le 14/7**
-> (§11quinquies) : elle a révélé et fait boucher une faille de visibilité.
+> EN RÉSUMÉ : parcours résident validé ; bascule automatique (`Config`) ;
+> fenêtre de 4 trimestres ; séquence nocturne (`residentapp-soldes-timer`) :
+> `syncAuto` → estampille `LastSoldesSync` → calcul des 9 indicateurs
+> (échecs isolés) ; **le flux Power Automate d'import des paiements est
+> REMPLACÉ par `npm run sp:paiements`** (imputation automatique ~91 %, WAL,
+> estampille `LastPaymentImport`) ; côté staff : modules 1 (tableau de bord)
+> et 3 (lettrage + recherche + présélection) LIVRÉS.
 >
-> ⚠ INDEX (§6.1) — DEUX règles : (1) Graph refuse un `$filter` sur colonne NON
-> INDEXÉE **immédiatement**, même sur une petite liste ; (2) **être indexée ne
-> suffit pas** — la PREMIÈRE clause d'un filtre composé doit elle-même ramener
-> moins de 5 000 lignes (`Year eq 2026` = ~8 000 lignes → 400, malgré l'index ;
-> `YearMonth eq 202604` = ~1 700 lignes → OK, pour toujours).
+> ⚠ AVANT LE PREMIER IMPORT RÉEL : **désactiver l'ancien flux Power
+> Automate**, puis `sp:paiements --dry-run` et contrôler `doublon-ignoré`
+> (§5.17).
+> ⚠ BASCULE : échéance du 1ᵉʳ août REQUALIFIÉE (rien en production d'ici
+> là) — mais **répétition générale OBLIGATOIRE avant la première rotation
+> réelle** : procédure **v5**, étape **A0** (file de lettrage VIDE).
+> ⚠ INDEX (§6.1) — DEUX règles : (1) Graph refuse un `$filter` sur colonne
+> NON INDEXÉE immédiatement, même sur une petite liste ; (2) la PREMIÈRE
+> clause d'un filtre composé doit elle-même ramener moins de 5 000 lignes.
+> ⚠ RÈGLE NÉE D'UN DÉSASTRE (§11quater) : avant de me livrer un fichier
+> complet, ouvre le fichier RÉEL et lis-le EN ENTIER, puis vérifie qu'il
+> contient une chaîne caractéristique de la session précédente. **Cela vaut
+> AUSSI pour les fichiers du projet Claude, qui sont une photo — et dans les
+> DEUX sens (§11sexies : la photo a restauré un document que le dépôt avait
+> perdu).**
+> ⚠ FIN DE SESSION : committer les documents AVANT `sync-projet-claude.sh`.
+> ⚠ TOUT EST SUR LE SITE DE TEST (`Resident_Test`). Rien n'est répliqué en
+> production Fedasil : index à poser AVANT le code (`sp:provision` les
+> liste) ; le secret Graph ne vit jamais chez GitHub.
 >
-> ⚠ RÈGLE NÉE D'UN DÉSASTRE (§11quater) : avant de me livrer un fichier complet,
-> ouvre le fichier RÉEL et lis-le EN ENTIER, puis vérifie qu'il contient une
-> chaîne caractéristique de la session précédente. **Cela vaut AUSSI pour les
-> fichiers du projet Claude, qui sont une photo et peuvent être périmés** (le
-> 14/7, `Portail.tsx` y était encore dans sa version amputée). `grep -c ""` et
-> `git log -S "<chaîne>"` tranchent.
->
-> ⚠ FENÊTRE DE 4 TRIMESTRES (§5.22) : `HISTORY_QUARTERS` ne peut PAS augmenter
-> tant que la communication structurée n'encode pas l'année.
->
-> ⚠ TOUT EST SUR LE SITE DE TEST (`Resident_Test`), avec un jeu de simulation
-> complet (`sp:seed`). Rien n'est répliqué en production Fedasil : les index
-> devront y être posés AVANT de déployer le code (`sp:provision` les liste).
-> ⚠ Fedasil refusera que le **secret Graph** soit stocké chez GitHub (§10.11).
->
-> OBJECTIF DE CETTE DISCUSSION : [À COMPLÉTER — pistes ouvertes : **reprendre
-> l'app staff** (CONCEPTION-STAFF-APP.md, six modules) ; **préparer la réplication
-> production** (index à poser AVANT le code ; procédure de déploiement du timer
-> dans `soldes-timer/README-SOLDES-TIMER.md`). Le chantier 2b (Function nocturne
-> Soldes) est TERMINÉ : l'automate tourne à 01:30 UTC sur le tenant de test.]
+> OBJECTIF DE CETTE DISCUSSION : [À COMPLÉTER — pistes ouvertes : **premier
+> import réel** (protocole §5.17) ; **répétition générale de la bascule** ;
+> **app staff** : module 7 (inscriptions), écran Anomalies ou module 4
+> (rappels) ; **réplication production** ; **consolidation Residents List**
+> (61 doublons de FA + liste des désinscrits).]
 >
 > Rappel de ma façon de travailler : je suis débutant confirmé, je préfère des
 > fichiers complets copier-coller prêts plutôt que des patchs, un pas-à-pas pour
 > les manipulations Azure/Entra/Power Platform, et je commite via l'interface Git
-> de VS Code (donne-moi juste les messages de commit, en UN SEUL commit). Avant
-> tout push : `npm run build` à la racine ET dans `api/`.
+> de VS Code (donne-moi juste les messages de commit, en UN SEUL commit par
+> dépôt). Avant tout push : `npm run build` à la racine ET dans `api/`.
