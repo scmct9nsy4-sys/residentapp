@@ -433,6 +433,43 @@
           "note": "Traçabilité : horodatage et origine de la dernière bascule (écrit par sp:rotate). Nom « RotationNote » et non « Note » pour éviter toute collision avec des noms internes SharePoint."
         }
       ]
+    },
+    {
+      "displayName": "Indicateurs",
+      "description": "INDICATEURS PRÉCALCULÉS du tableau de bord staff (module 1 de CONCEPTION-STAFF-APP.md — décision du 20/7/2026 : le calcul vit dans le traitement NOCTURNE de la Function App residentapp-soldes-timer via scripts/lib/indicateurs.ts, PAS dans un flux Power Automate). SharePoint ne calcule aucun agrégat côté serveur (pas de SUM) et les requêtes par ABSENCE (« qui n'a pas déclaré ») sont impossibles en $filter : tout se précalcule ici, l'écran ne recalcule JAMAIS. Une ligne par indicateur (clé = Title, upsert idempotent par sp:indicateurs). Trois écrivains : sp:indicateurs (agrégats nocturnes), sp:paiements (estampille LastPaymentImport en fin d'import réel), le timer nocturne (estampille LastSoldesSync après un syncAuto réussi). Un lecteur : l'app staff (module 1). Liste minuscule (~une douzaine de lignes) : lue SANS $filter, aucun enjeu d'index ni de seuil des 5000 — même famille que Config. La FILE DE LETTRAGE, elle, se compte EN DIRECT à l'écran (Status indexée, ~200 lignes) : une valeur de la veille ferait un garde-fou menteur.",
+      "columns": [
+        {
+          "name": "Title",
+          "type": "text",
+          "documentOnly": true,
+          "note": "Colonne intégrée. CODE NEUTRE de l'indicateur (clé d'upsert). Codes calculés la nuit : DeclaredResidents, NotDeclaredResidents (croisement Residents List × KB-Cumul active — la requête par absence), QuarterDueTotal, QuarterPaidTotal (trimestre courant), OverdueTotal, OverdueMonths, OverdueResidents (Balance > 0 et DueDate dépassée, fenêtre des 4 trimestres), OverdueOutOfWindowTotal (dettes SORTIES de la fenêtre — l'assiette des futures communications 990), StructuredComRateQuarter (KB-Paiements du trimestre courant). Estampilles : LastPaymentImport (sp:paiements), LastSoldesSync (timer). Les compteurs d'escalade (rappels/MD/contentieux) arriveront avec le module 4."
+        },
+        {
+          "name": "NumValue",
+          "type": "number",
+          "note": "Valeur numérique de l'indicateur (montant en €, compteur, ou taux 0-100 pour StructuredComRateQuarter). Vide pour une estampille purement temporelle."
+        },
+        {
+          "name": "TextValue",
+          "type": "text",
+          "note": "Valeur textuelle courte quand le nombre ne suffit pas (ex. nom du dernier fichier CSV importé pour LastPaymentImport)."
+        },
+        {
+          "name": "Scope",
+          "type": "text",
+          "note": "Périmètre de l'agrégat, lisible (ex. « T2 2026 » ou « fenêtre T3 2025 → T2 2026 ») — le tableau de bord l'affiche tel quel : précieux autour de la bascule trimestrielle pour savoir à quoi se rapporte le chiffre."
+        },
+        {
+          "name": "ComputedAt",
+          "type": "dateTime",
+          "note": "Horodatage du calcul ou de l'estampille : CHAQUE ligne porte sa propre fraîcheur (le tableau de bord signale un indicateur périmé sans deviner)."
+        },
+        {
+          "name": "Detail",
+          "type": "note",
+          "note": "Contexte libre lisible par le staff (ex. stats du lot d'import : volume, % auto-imputé, % structuré). Documentation, jamais parsé par le code."
+        }
+      ]
     }
   ]
 }

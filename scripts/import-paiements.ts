@@ -104,6 +104,7 @@ import {
   type Logger,
   type Settings,
 } from "./lib/soldes-sync.js";
+import { INDICATOR, stampIndicator } from "./lib/indicateurs.js";
 
 // ---------------------------------------------------------------------------
 //  Constantes de schéma
@@ -1356,6 +1357,41 @@ async function main(): Promise<void> {
   }
 
   log(`\nTOTAL${dryRun ? " (dry-run, AUCUNE écriture)" : ""} : ${reportSummary(report)}`);
+
+  // Estampille « LastPaymentImport » (liste Indicateurs, tableau de bord
+  // staff — module 1) : chaque acteur estampille son propre passage. JAMAIS
+  // en dry-run (une répétition n'est pas un import). Une estampille qui
+  // échoue ne doit JAMAIS faire échouer l'import qu'elle documente : on
+  // journalise et on continue.
+  if (!dryRun) {
+    const counter = (k: string): number => report.counters.get(k) ?? 0;
+    const imported =
+      counter("importé-imputé") +
+      counter("importé-corrigé-imputé") +
+      counter("importé-àtraiter");
+    try {
+      await stampIndicator(
+        graph,
+        siteId,
+        {
+          title: INDICATOR.lastPaymentImport,
+          numValue: imported,
+          textValue:
+            files.map((f) => basename(f)).join(", ") || "--retenter-seulement",
+          scope: new Date().toISOString().slice(0, 10),
+          detail: reportSummary(report),
+        },
+        log
+      );
+    } catch (err) {
+      log(
+        `⚠ Estampille LastPaymentImport NON écrite (${
+          err instanceof Error ? err.message.split("\n")[0] : String(err)
+        }) — l'import, lui, est terminé et intact.`
+      );
+    }
+  }
+
   log(
     "\nRejouable à volonté (idempotence par référence bancaire). Les virements\n" +
       "« ToProcess » restants sont dans la file de lettrage de l'app staff."

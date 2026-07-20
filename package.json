@@ -17,7 +17,8 @@
     "sp:soldes": "tsx scripts/snapshot-soldes.ts",
     "sp:seed": "tsx scripts/seed-simulation.ts",
     "sp:paiements-status": "tsx scripts/migrate-paiements-status.ts",
-    "sp:paiements": "tsx scripts/import-paiements.ts"
+    "sp:paiements": "tsx scripts/import-paiements.ts",
+    "sp:indicateurs": "tsx scripts/compute-indicateurs.ts"
   },
   "dependencies": {
     "qrcode": "^1.5.4",

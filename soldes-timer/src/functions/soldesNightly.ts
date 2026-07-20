@@ -33,6 +33,12 @@ import {
   SoldesSyncError,
   type Settings,
 } from "../../../scripts/lib/soldes-sync";
+import {
+  INDICATOR,
+  computeIndicateurs,
+  formatIndicateursSummary,
+  stampIndicator,
+} from "../../../scripts/lib/indicateurs";
 
 /** Les 5 identifiants attendus — mêmes noms que api/local.settings.json. */
 const REQUIRED_SETTINGS = [
@@ -106,6 +112,51 @@ export async function soldesNightly(
       context.warn(
         `⚠ ${outOfQuarter} ligne(s) hors trimestre : année déduite peut-être ` +
           `fausse dans Soldes. À investiguer (voir §5.20.1).`
+      );
+    }
+
+    // ── Module 1 (tableau de bord staff) ─────────────────────────────────
+    // 1) Estampille « LastSoldesSync » : chaque acteur estampille son propre
+    //    passage — jamais en dry-run (une répétition n'est pas une synchro).
+    //    Une estampille qui échoue ne fait JAMAIS échouer la synchro qu'elle
+    //    documente : on remonte l'erreur dans Application Insights, sans throw.
+    if (!dryRun) {
+      try {
+        await stampIndicator(
+          graph,
+          siteId,
+          {
+            title: INDICATOR.lastSoldesSync,
+            scope: `T${active.quarter} ${active.year}`,
+            detail: formatSummary(results, dryRun).trim(),
+          },
+          log
+        );
+      } catch (err) {
+        context.error(
+          `⚠ Estampille LastSoldesSync NON écrite : ${
+            err instanceof Error ? err.message : String(err)
+          } — la synchro, elle, est terminée et intacte.`
+        );
+      }
+    }
+
+    // 2) Indicateurs PRÉCALCULÉS : le calcul tourne JUSTE APRÈS la synchro —
+    //    les agrégats sont cohérents avec la photo Soldes de cette nuit. Même
+    //    règle d'isolement : un échec du calcul laisse le tableau de bord sur
+    //    ses valeurs de la veille (chaque ligne porte son ComputedAt), il ne
+    //    marque pas la synchro « échouée ».
+    try {
+      const indicateurs = await computeIndicateurs(graph, siteId, {
+        dryRun,
+        log,
+      });
+      log(formatIndicateursSummary(indicateurs, dryRun));
+    } catch (err) {
+      context.error(
+        `⚠ Calcul des indicateurs ÉCHOUÉ : ${
+          err instanceof Error ? err.message : String(err)
+        } — le tableau de bord reste sur ses valeurs de la veille.`
       );
     }
 
