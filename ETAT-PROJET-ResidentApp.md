@@ -1,5 +1,15 @@
 # ÉTAT DU PROJET — ResidentApp (Fedasil)
 
+**Version 18 — 21 juillet 2026 (soir)** (remplace la v17 — session « module 4
+staff, chantier R2 : moteur du rappel 1 ». Portail : schéma étendu (`ParamValue`
+sur Config, `ContactLanguage` sur Residents List, liste `Journal-Rappels`), lib
+`scripts/lib/rappels.ts` + CLI `sp:rappels`, branchement dans le timer nocturne
+`soldesNightly.ts` (moteur EN DERNIER, échecs isolés). Staff : indicateur
+`LastReminder1Run` + tuile « moteur de rappels » au dashboard. Interrupteur OFF
+au déploiement ; allumage = geste de production. Dry-run réel : 4 015 mois
+candidats (bouclage avec la vue Recouvrement). Garde-fou fail-safe validé par
+abstention. CONCEPTION v10. Historique v17 ci-dessous.)
+
 **Version 17 — 21 juillet 2026** (remplace la v16 — session « module 4
 staff, chantier R1 (socle) » : **6 colonnes de la machine à états posées
 sur Soldes** par `sp:provision` (§5.20 — `ReminderLevel`, `Reminder1Date`,
@@ -1291,6 +1301,18 @@ résident) ; éclatement d'`App.css` par écran (au-delà de ~1 500 lignes) ;
 **consolidation Residents List** (61 lignes en DOUBLON de FA détectées par le
 calcul + fusion de la liste des désinscrits — en attendant, population « sans
 déclaration » = toute la liste).
+
+✅ **TERMINÉ (v18, 21/7 soir) — Module 4 R2 : moteur du rappel 1 (portail +
+staff).** Portail : schéma étendu (`ParamValue` sur Config, `ContactLanguage`
+sur Residents List, liste `Journal-Rappels`), lib `scripts/lib/rappels.ts` +
+CLI `sp:rappels` (dry-run par défaut, `--envoyer`, `--init-params`),
+branchement dans `soldes-timer/soldesNightly.ts` (moteur EN DERNIER, après
+synchro + indicateurs, échecs isolés ; `SOLDES_DRY_RUN` le force aussi en
+dry-run). Staff : indicateur `LastReminder1Run` (miroir), tuile « moteur de
+rappels » au dashboard. Interrupteur `Reminder1Enabled` **OFF au
+déploiement** ; allumage = geste de production (CONCEPTION v10 §4.13).
+Dry-run réel : **4 015 mois candidats** (bouclage avec la vue Recouvrement et
+les indicateurs). Garde-fou fail-safe validé par abstention.
 
 ✅ **TERMINÉ (v9, 13/7 soir) — CHANTIER §10.0 : bascule automatique du
 trimestre** (liste `Config`, règle §5.21) : schéma, `sp:rotate` v2
