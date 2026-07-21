@@ -1,5 +1,19 @@
 # ÉTAT DU PROJET — ResidentApp (Fedasil)
 
+**Version 17 — 21 juillet 2026** (remplace la v16 — session « module 4
+staff, chantier R1 (socle) » : **6 colonnes de la machine à états posées
+sur Soldes** par `sp:provision` (§5.20 — `ReminderLevel`, `Reminder1Date`,
+`Reminder2Date`, `NoticeDate`, `NoticeChannel` codes `Paper`/`Electronic`,
+`PaymentPlanRef` RÉSERVÉE) ; **restauration des 9 flags `indexed` du 13/7
+PERDUS de `sharepoint-schema.json`** (§6.1 — le tenant, lui, était resté
+correct : l'audit d'index de `sp:provision` refonctionne) ; côté staff :
+vue **« Recouvrement »** (candidats au rappel, lecture seule) VALIDÉE par
+bouclage avec les indicateurs nocturnes (4 015 mois échus par deux chemins
+indépendants — CONCEPTION v9, SETUP v7). Incident évité du jour : la PHOTO
+du schéma dans le projet Claude avait UNE SEMAINE de retard — l'audit
+chiffré §11quater l'a démasquée avant toute livraison (leçon §11septies).
+Historique v16 ci-dessous.)
+
 **Version 16 — 20 juillet 2026** (remplace la v15 — session « module 1
 staff : tableau de bord » : nouvelle liste **`Indicateurs`** (§5.23) —
 agrégats PRÉCALCULÉS chaque nuit par le timer nocturne (lib partagée
@@ -574,6 +588,23 @@ et renvoyer moins de 5000 lignes (filtres composés — discipline « 5000 »,
 CONCEPTION-STAFF-APP §6). Volumétrie constatée : ~2000 lignes/trimestre
 (données de test T4), soit ~8000/an.
 
+**Colonnes du MODULE 4 (machine à états — posées le 21/7/2026, chantier R1
+staff).** Six colonnes ajoutées par `sp:provision`, JAMAIS touchées par
+`sp:soldes` (qui ne possède pas ces colonnes — elles survivent à chaque
+resynchronisation) : `ReminderLevel` (0-3 : aucun rappel / rappel 1 /
+rappel 2 / mise en demeure — le « niveau du dossier » est DÉRIVÉ, max des
+mois, jamais stocké), `Reminder1Date`, `Reminder2Date`, `NoticeDate`,
+`NoticeChannel` (choice, codes neutres `Paper`/`Electronic` — ⚠ écriture
+SDK staff : objet `{ Value }` ; via Graph : la chaîne), `PaymentPlanRef`
+(RÉSERVÉE — plan d'apurement, conception staff §4.6 : aucun code ne
+l'écrit en v1). Traçabilité PAR MOIS = preuve juridique par créance
+(conception staff §4.2). Pas d'index (requêtes d'écran sur
+`YearMonth`/`PayStatus`, moteur en balayage paginé). ⚠ Ces colonnes vivent
+UNIQUEMENT dans Soldes : les listes KB-Cumul ne les portent pas — un mois
+du trimestre COURANT lu depuis KB-Cumul (fiche 360° staff) les rend au
+niveau 0 ; fusion depuis Soldes prévue quand la fiche affichera
+l'historique des rappels (backlog, avec le chantier R2).
+
 #### 5.20.1 Cadence de synchronisation (14/7/2026, revu le soir même)
 
 Depuis que le résident consulte ses trimestres antérieurs DANS Soldes (§5.22),
@@ -888,6 +919,17 @@ c'était FAUX — seule la liste Soldes les avait. Les 9 flags manquants
 indexée qui ne l'est pas produit un ⚠ (il ne la modifie jamais — principe
 « jamais de modification »). C'est l'outil qui listera les index à poser à la
 main sur le tenant Fedasil, AVANT le déploiement du code.
+
+**🔴 RECHUTE DÉTECTÉE ET RÉPARÉE LE 21/7/2026 : les 9 flags du 13/7 avaient
+DISPARU du schéma une seconde fois** (perdus lors d'une réécriture
+ultérieure — vraisemblablement une mise à jour partie d'une copie
+antérieure). Le TENANT, lui, était resté correct (les colonnes ré-flaguées
+sont toutes ressorties « indexée » au `sp:provision` du 21/7) : seul
+l'AUDIT était aveugle — et le provisioning Fedasil aurait créé ces
+colonnes SANS index (panne immédiate, règle 3). Flags restaurés avec notes
+de justification ; compteur de contrôle : **17 occurrences de `indexed`**
+dans `sharepoint-schema.json` (1 documentation + Residents List ×3 +
+KB-Cumul ×4 + KB-Paiements ×4 + Soldes ×5). Leçon générale : §11septies.
 
 **Retrait du header (13/7/2026)** : `Prefer:
 HonorNonIndexedQueriesWarningMayFailRandomly` a été supprimé de `queryItems()`
@@ -1913,23 +1955,72 @@ dates au lieu de les promettre : la fraîcheur devient une donnée visible,
 avec un seuil d'alerte (26 h) défini dans la couche données, pas dans le
 composant. Le garde-fou du module 4 lira les MÊMES lignes.
 
+## 11septies. Leçons de la session du 21/7 (module 4 R1 — et le schéma qui avait régressé)
+
+### 1. Le SCHÉMA aussi peut régresser silencieusement — l'audit chiffré AVANT toute livraison
+
+La photo de `sharepoint-schema.json` dans le projet Claude avait UNE
+SEMAINE de retard (codes `Status` encore français, ni `Indicateurs`, ni
+`ImportFile`/`BankSeq`, 6 `indexed` au lieu de 17). La livraison prévue —
+« photo + ajouts » — aurait effacé TROIS sessions de travail. Ce qui a
+sauvé la mise : l'**audit chiffré systématique** (§11quater outillé) —
+`wc -l` + une batterie de `grep -c` sur des marqueurs DOCUMENTÉS,
+comparés photo contre dépôt AVANT de construire quoi que ce soit. Et
+l'audit a payé deux fois : le fichier RÉEL, une fois transmis, a révélé
+que **les 9 flags `indexed` du 13/7 avaient eux-mêmes disparu du dépôt**
+(§6.1 — le tenant était resté correct, seul l'audit d'index était
+aveugle). Règle : un compteur attendu se calcule À L'AVANCE depuis la
+documentation ; tout écart, dans un sens comme dans l'autre, se comprend
+AVANT d'éditer.
+
+### 2. La preuve d'invariance accompagne la livraison chirurgicale
+
+Livrer un fichier critique reconstruit = livrer AUSSI la preuve que rien
+d'autre n'a bougé : éditions par remplacements ANCRÉS (chaque ancre
+vérifiée unique) + comparaison programmatique de la STRUCTURE avant/après
+(listes × colonnes × types × choices, hors ajouts voulus) + compteurs
+finaux annoncés (521 lignes, `indexed` = 17). Le `git diff` de GI n'a plus
+qu'à confirmer ce qui a été annoncé — la confiance se transporte avec le
+fichier.
+
+### 3. Un agrégat précalculé se valide par BOUCLAGE avec un calcul indépendant
+
+La vue Recouvrement compte EN DIRECT (à l'écran) ce que la lib portail
+précalcule LA NUIT : mêmes 4 015 mois échus par deux chemins de code
+disjoints sur la même photo Soldes. La coïncidence valide LES DEUX d'un
+coup ; un écart persistant est une anomalie, jamais un arrondi
+(généralisation de §11sexies-2 : « un agrégat honnête doit boucler » —
+ici, boucler ENTRE IMPLÉMENTATIONS).
+
+### 4. Une capacité invisible n'existe pas — nommer les issues, montrer les cibles
+
+Le ciblage d'un mois du plan de lettrage EXISTAIT depuis le module 3 ;
+face au cas réel (« intention caduque » : communication valide pour un
+mois soldé), le collaborateur ne l'a pas trouvé — le message parlait de
+« choisir un autre périmètre » sans montrer où. Correctif : bandeau qui
+nomme la CAUSE probable et le GESTE, message d'erreur aux issues NOMMÉES
+(les libellés exacts des boutons), affordance visuelle des cibles. Règle
+d'interface : un message qui bloque doit CITER les boutons qui débloquent.
+
 ## 12. Prompt de relance (à coller au début de la prochaine conversation)
 > Bonjour Claude. Je poursuis le développement de ResidentApp (portail Fedasil
 > pour résidents, React + TypeScript + CSS pur, Azure Static Web Apps +
 > Functions). CONTEXTE : tout l'état du projet est dans
-> ETAT-PROJET-ResidentApp.md (**v16 du 20 juillet 2026**) — lis-le d'abord,
+> ETAT-PROJET-ResidentApp.md (**v17 du 21 juillet 2026**) — lis-le d'abord,
 > en particulier **§5.17 (paiements + import `sp:paiements`)**, **§5.20
-> (règle de vérité CORRIGÉE + cadence)**, **§5.23 (liste `Indicateurs` —
-> tableau de bord staff précalculé)**, **§6.1 (index — DEUX règles + fenêtre
-> unique)**, **§7.5** et **§11quater à §11sexies (leçons)**.
+> (règle de vérité CORRIGÉE + cadence + 6 colonnes du MODULE 4)**, **§5.23
+> (liste `Indicateurs`)**, **§6.1 (index — DEUX règles + fenêtre unique +
+> flags RESTAURÉS le 21/7)**, **§7.5** et **§11quater à §11septies
+> (leçons)**.
 >
 > EN RÉSUMÉ : parcours résident validé ; bascule automatique (`Config`) ;
 > fenêtre de 4 trimestres ; séquence nocturne (`residentapp-soldes-timer`) :
 > `syncAuto` → estampille `LastSoldesSync` → calcul des 9 indicateurs
 > (échecs isolés) ; **le flux Power Automate d'import des paiements est
 > REMPLACÉ par `npm run sp:paiements`** (imputation automatique ~91 %, WAL,
-> estampille `LastPaymentImport`) ; côté staff : modules 1 (tableau de bord)
-> et 3 (lettrage + recherche + présélection) LIVRÉS.
+> estampille `LastPaymentImport`) ; côté staff : modules 1-3 LIVRÉS et
+> **module 4 chantier R1** (colonnes machine à états sur Soldes + vue
+> Recouvrement, bouclage 4 015 validé — CONCEPTION staff v9).
 >
 > ⚠ AVANT LE PREMIER IMPORT RÉEL : **désactiver l'ancien flux Power
 > Automate**, puis `sp:paiements --dry-run` et contrôler `doublon-ignoré`
@@ -1953,9 +2044,10 @@ composant. Le garde-fou du module 4 lira les MÊMES lignes.
 >
 > OBJECTIF DE CETTE DISCUSSION : [À COMPLÉTER — pistes ouvertes : **premier
 > import réel** (protocole §5.17) ; **répétition générale de la bascule** ;
-> **app staff** : module 7 (inscriptions), écran Anomalies ou module 4
-> (rappels) ; **réplication production** ; **consolidation Residents List**
-> (61 doublons de FA + liste des désinscrits).]
+> **app staff** : module 4 chantier R2 (rappel 1 — questions ouvertes à
+> trancher : CONCEPTION v9, journal du 21/7), module 7 (inscriptions) ou
+> écran Anomalies ; **réplication production** ; **consolidation Residents
+> List** (61 doublons de FA + liste des désinscrits).]
 >
 > Rappel de ma façon de travailler : je suis débutant confirmé, je préfère des
 > fichiers complets copier-coller prêts plutôt que des patchs, un pas-à-pas pour

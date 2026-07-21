@@ -26,7 +26,8 @@
           "name": "Title",
           "type": "text",
           "documentOnly": true,
-          "note": "Colonne intégrée SharePoint. Contient le NUMÉRO NATIONAL (SP_NATIONALID_FIELD=Title). À confirmer en ouvrant une ligne."
+          "indexed": true,
+          "note": "Colonne intégrée SharePoint. Contient le NUMÉRO NATIONAL (SP_NATIONALID_FIELD=Title). À confirmer en ouvrant une ligne. INDEXÉE (§6.1, posée le 13/7/2026) : éligibilité par NN (/api/pre-inscription)."
         },
         {
           "name": "FirstName",
@@ -50,12 +51,14 @@
           "name": "FedasilNumber",
           "type": "text",
           "documentOnly": true,
-          "note": "Clé maîtresse (FA). Unique et permanente. Saisie par le staff."
+          "indexed": true,
+          "note": "Clé maîtresse (FA). Unique et permanente. Saisie par le staff. INDEXÉE (§6.1, posée le 13/7/2026)."
         },
         {
           "name": "EntraOid",
           "type": "text",
-          "note": "SEULE colonne à créer. oid du compte invité Entra. Écrit par /api/pre-inscription (et auto-réparation dans /api/me et /api/declare). Plusieurs lignes peuvent porter le même oid (familles). Variable SP_RESIDENT_OID_FIELD=EntraOid."
+          "indexed": true,
+          "note": "INDEXÉE (§6.1, posée le 13/7/2026) : CHEMIN CRITIQUE du login — /api/me résout l'identité par oid à CHAQUE connexion. SEULE colonne à créer. oid du compte invité Entra. Écrit par /api/pre-inscription (et auto-réparation dans /api/me et /api/declare). Plusieurs lignes peuvent porter le même oid (familles). Variable SP_RESIDENT_OID_FIELD=EntraOid."
         }
       ]
     },
@@ -84,7 +87,8 @@
           "name": "FedasilNumber",
           "type": "text",
           "documentOnly": true,
-          "note": "FA (type texte confirmé par sp:inspect -> SP_FA_IS_NUMBER reste false)."
+          "indexed": true,
+          "note": "FA (type texte confirmé par sp:inspect -> SP_FA_IS_NUMBER reste false). INDEXÉE (§6.1, posée le 13/7/2026) : lecture des déclarations d'UN résident. ⚠ Règle 2 du §6.1 : un index ne se pose que sur liste < 5 000 éléments — pour une KB-Cumul, la fenêtre sûre est JUSTE APRÈS la rotation, sur liste vide (étape de PROCEDURE-BASCULE-TRIMESTRE.md)."
         },
         {
           "name": "Month",
@@ -131,7 +135,9 @@
       "columns": [
         {
           "name": "FedasilNumber",
-          "type": "text"
+          "type": "text",
+          "indexed": true,
+          "note": "INDEXÉE (§6.1, posée le 13/7/2026) — voir la note de KB-Cumul T4 (fenêtre de pose : liste vide, juste après rotation)."
         },
         {
           "name": "Month",
@@ -169,7 +175,9 @@
       "columns": [
         {
           "name": "FedasilNumber",
-          "type": "text"
+          "type": "text",
+          "indexed": true,
+          "note": "INDEXÉE (§6.1, posée le 13/7/2026) — voir la note de KB-Cumul T4."
         },
         {
           "name": "Month",
@@ -207,7 +215,9 @@
       "columns": [
         {
           "name": "FedasilNumber",
-          "type": "text"
+          "type": "text",
+          "indexed": true,
+          "note": "INDEXÉE (§6.1, posée le 13/7/2026) — voir la note de KB-Cumul T4."
         },
         {
           "name": "Month",
@@ -284,7 +294,8 @@
         {
           "name": "FedasilNumber",
           "type": "text",
-          "note": "FA résolu après lettrage (vide tant que non imputé)."
+          "indexed": true,
+          "note": "FA résolu après lettrage (vide tant que non imputé). INDEXÉE (§6.1, posée le 13/7/2026) : détail des virements d'un dossier (fiche 360°)."
         },
         {
           "name": "Month",
@@ -299,7 +310,8 @@
             "Imputed",
             "Anomaly"
           ],
-          "note": "État du lettrage — CODES TECHNIQUES NEUTRES depuis la migration sp:paiements-status (préalable du module 3 de l'app staff ; l'interface traduit, la donnée ne porte aucune langue) : « ToProcess » à l'import ; « Imputed » quand crédité dans Paid ; « Anomaly » si irrésoluble."
+          "indexed": true,
+          "note": "INDEXÉE (§6.1, posée le 13/7/2026) : LA requête du module 3 (file de lettrage « ToProcess »). État du lettrage — CODES TECHNIQUES NEUTRES depuis la migration sp:paiements-status (préalable du module 3 de l'app staff ; l'interface traduit, la donnée ne porte aucune langue) : « ToProcess » à l'import ; « Imputed » quand crédité dans Paid ; « Anomaly » si irrésoluble."
         },
         {
           "name": "ImportFile",
@@ -315,7 +327,7 @@
     },
     {
       "displayName": "Soldes",
-      "description": "MÉMOIRE PERMANENTE des soldes mensuels (photo complète, décision du 12/7/2026 — §3 de CONCEPTION-STAFF-APP.md). Une ligne = un mois déclaré pour un FA (FA × année × mois), créée et resynchronisée depuis les listes KB-Cumul par « npm run sp:soldes -- T2 2026 » (upsert idempotent, clé = Title). RÈGLE DE VÉRITÉ : tant que la ligne KB-Cumul existe (~9 mois après la clôture du trimestre), KB-Cumul reste la source (le portail résident la lit) et sp:soldes resynchronise ; après le vidage de la liste trimestrielle, Soldes devient la SEULE vérité. Les colonnes du moteur de rappels (module 4 de l'app staff : niveau d'escalade, dates d'envoi…) seront ajoutées ici plus tard — sp:soldes ne touche JAMAIS aux colonnes qu'il ne possède pas.",
+      "description": "MÉMOIRE PERMANENTE des soldes mensuels (photo complète, décision du 12/7/2026 — §3 de CONCEPTION-STAFF-APP.md). Une ligne = un mois déclaré pour un FA (FA × année × mois), créée et resynchronisée depuis les listes KB-Cumul par « npm run sp:soldes -- T2 2026 » (upsert idempotent, clé = Title). RÈGLE DE VÉRITÉ : tant que la ligne KB-Cumul existe (~9 mois après la clôture du trimestre), KB-Cumul reste la source (le portail résident la lit) et sp:soldes resynchronise ; après le vidage de la liste trimestrielle, Soldes devient la SEULE vérité. Les colonnes du MOTEUR DE RAPPELS (module 4 de l'app staff, chantier R1 du 21/7/2026) — ReminderLevel, Reminder1Date, Reminder2Date, NoticeDate, NoticeChannel, PaymentPlanRef — vivent ici : traçabilité PAR MOIS (preuve juridique par créance, conception §4.2), écrites par le moteur nocturne et les validations staff, JAMAIS par sp:soldes (qui ne touche JAMAIS aux colonnes qu'il ne possède pas — elles survivent donc à chaque resynchronisation).",
       "columns": [
         {
           "name": "Title",
@@ -394,6 +406,40 @@
           "name": "DueDate",
           "type": "dateTime",
           "note": "Échéance §5.18 : dernier jour du mois SUIVANT le mois déclaré (avril → 31 mai). Calculée par sp:soldes."
+        },
+        {
+          "name": "ReminderLevel",
+          "type": "number",
+          "note": "MODULE 4 (machine à états, conception §4.1-4.2) : niveau d'escalade ATTEINT pour CE mois. Vide ou 0 = aucun rappel ; 1 = rappel 1 envoyé ; 2 = rappel 2 envoyé ; 3 = mise en demeure envoyée. Écrit par le moteur nocturne (rappel 1), l'envoi du lot validé (rappel 2) et le visa du chef de service (MD). Le « niveau du DOSSIER » est DÉRIVÉ (max des niveaux de ses mois), jamais stocké. On ne saute JAMAIS d'étape pour une créance donnée. PAS d'index (les requêtes d'écran partent de PayStatus/YearMonth ; le moteur balaie en paginé — §4.9)."
+        },
+        {
+          "name": "Reminder1Date",
+          "type": "dateTime",
+          "note": "MODULE 4 : date d'envoi du rappel 1 (e-mail AUTOMATIQUE à échéance dépassée, interrupteur dans Config). Estampillée par le moteur nocturne sur CHAQUE ligne couverte par l'envoi — une mise en demeure exige de PROUVER les rappels préalables par créance (§4.9)."
+        },
+        {
+          "name": "Reminder2Date",
+          "type": "dateTime",
+          "note": "MODULE 4 : date d'envoi du rappel 2 (e-mail, échéance + 1 mois — lot préparé la nuit, VALIDÉ d'un clic le matin par le staff). Estampillée à l'envoi effectif du lot validé."
+        },
+        {
+          "name": "NoticeDate",
+          "type": "dateTime",
+          "note": "MODULE 4 : date de la mise en demeure (rappel 2 + 15 jours — validation INDIVIDUELLE par le chef de service, recommandé). Estampillée à la génération du courrier validé (marche 1 : Excel du publipostage — §4.8)."
+        },
+        {
+          "name": "NoticeChannel",
+          "type": "choice",
+          "choices": [
+            "Paper",
+            "Electronic"
+          ],
+          "note": "MODULE 4 : canal de la mise en demeure — CODES TECHNIQUES NEUTRES (l'interface traduit). « Paper » = recommandé papier (marches 1-2 du publipostage §4.8) ; « Electronic » = recommandé électronique bpost/eBox (marche 3, backlog). ⚠ Écriture côté app staff (SDK) : objet { Value: \"Paper\" }, JAMAIS une chaîne nue (piège n°14 du SETUP staff) ; via Graph (portail), la CHAÎNE."
+        },
+        {
+          "name": "PaymentPlanRef",
+          "type": "text",
+          "note": "RÉSERVÉE (conception §4.6, décision du 16/7/2026) : référence du futur PLAN D'APUREMENT — état SUSPENSIF de la machine à états (un dossier sous plan sort du circuit de rappels tant que le plan est respecté). AUCUN code ne l'écrit en v1 : le provisioning du module 4 réserve la place, la conception du plan viendra plus tard."
         }
       ]
     },
