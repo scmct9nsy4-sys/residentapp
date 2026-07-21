@@ -39,6 +39,11 @@ import {
   formatIndicateursSummary,
   stampIndicator,
 } from "../../../scripts/lib/indicateurs";
+import {
+  formatReminderSummary,
+  runReminder1,
+  type ReminderMailContext,
+} from "../../../scripts/lib/rappels";
 
 /** Les 5 identifiants attendus — mêmes noms que api/local.settings.json. */
 const REQUIRED_SETTINGS = [
@@ -72,6 +77,20 @@ function loadSettings(): Settings {
   }
 
   return values as Settings;
+}
+
+/** URL du portail résident — MÊME dérivation que Subscription.ts et
+ *  scripts/run-rappels.ts : PORTAL_URL prime, sinon INVITE_REDIRECT_URL avec
+ *  « /portail » ajouté s'il n'y est pas déjà. Vide si rien n'est configuré :
+ *  le moteur de rappels le signale lui-même (bloquant en mode réel, simple
+ *  avertissement en dry-run). */
+function derivePortalUrl(): string {
+  const explicit = (process.env["PORTAL_URL"] ?? "").trim();
+  if (explicit) return explicit;
+  const redirect = (process.env["INVITE_REDIRECT_URL"] ?? "").trim();
+  if (!redirect) return "";
+  const base = redirect.replace(/\/+$/, "");
+  return base.endsWith("/portail") ? base : `${base}/portail`;
 }
 
 /** Point d'entrée du timer. */
@@ -157,6 +176,39 @@ export async function soldesNightly(
         `⚠ Calcul des indicateurs ÉCHOUÉ : ${
           err instanceof Error ? err.message : String(err)
         } — le tableau de bord reste sur ses valeurs de la veille.`
+      );
+    }
+
+    // 3) MOTEUR DE RAPPELS (module 4, chantier R2b) : il tourne EN DERNIER —
+    //    après la synchro (photo Soldes fraîche) et les indicateurs (les
+    //    estampilles que son garde-fou §4.4 relit). Même règle d'isolement :
+    //    un échec du moteur ne marque JAMAIS la nuit « échouée ». En
+    //    fonctionnement normal, l'interrupteur « Reminder1Enabled » (liste
+    //    Config) est le SEUL maître : OFF -> abstention ET estampille
+    //    « LastReminder1Run » avec la raison — la preuve de vie quotidienne
+    //    que le tableau de bord staff affiche. SOLDES_DRY_RUN=true force
+    //    aussi le moteur en dry-run (rien n'est écrit, rien n'est envoyé,
+    //    aucune estampille : une répétition n'est pas un passage).
+    try {
+      const mailCtx: ReminderMailContext = {
+        senderUserId: (process.env["GRAPH_SENDER_USER_ID"] ?? "").trim(),
+        portalUrl: derivePortalUrl(),
+        paymentIban: (process.env["PAYMENT_IBAN"] ?? "").trim(),
+        paymentBeneficiary: (process.env["PAYMENT_BENEFICIARY"] ?? "").trim(),
+      };
+      const rappels = await runReminder1(cfg, graph, mailCtx, { dryRun, log });
+      log(formatReminderSummary(rappels));
+      if (!rappels.aborted && rappels.failed > 0) {
+        context.warn(
+          `⚠ Rappels : ${rappels.failed} envoi(s) en échec — retentés au ` +
+            `prochain passage (lignes « Failed » dans Journal-Rappels).`
+        );
+      }
+    } catch (err) {
+      context.error(
+        `⚠ Moteur de rappels ÉCHOUÉ : ${
+          err instanceof Error ? err.message : String(err)
+        } — la synchro et les indicateurs de cette nuit, eux, sont intacts.`
       );
     }
 
