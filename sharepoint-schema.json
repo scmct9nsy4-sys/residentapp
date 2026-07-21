@@ -48,6 +48,11 @@
           "note": "Adresse de contact. Modifiable, NON unique (familles). Écrite par /api/pre-inscription."
         },
         {
+          "name": "ContactLanguage",
+          "type": "text",
+          "note": "MODULE 4 — chantier R2a (21/7/2026, conception §4.7 « langue lue dans Residents List ») : langue de contact du résident, codes neutres minuscules « fr » / « nl » / « en ». Lue par le moteur de rappels pour composer l'e-mail dans la langue du résident. VIDE ou invalide = repli sûr : e-mail TRILINGUE (jamais de mauvais choix de langue). BACKLOG consigné : /api/pre-inscription (Subscription.ts) la renseignera à l'inscription à partir de contactLanguage, déjà présent dans la requête mais jamais persisté à ce jour."
+        },
+        {
           "name": "FedasilNumber",
           "type": "text",
           "documentOnly": true,
@@ -445,7 +450,7 @@
     },
     {
       "displayName": "Config",
-      "description": "CONFIGURATION APPLICATIVE (chantier §10.0, créée le 13/7/2026). Une ligne par clé (colonne Title). Ligne « ActiveQuarter » = trimestre actif de l'application : écrite par « npm run sp:rotate » À LA FIN de la rotation (après archivage et vidage réussis, confirmation BASCULER), lue par /api/me et /api/declare via api/src/shared/quarterConfig.ts (cache mémoire ~5 min, REPLI sur les variables d'environnement SP_CUMUL_* si la liste est illisible). C'est cette écriture qui bascule le portail : plus de variable à modifier, plus de redéploiement, plus de piège « l'ID prime sur le nom » (ID et nom écrits ensemble). Source de vérité PARTAGÉE avec la future app staff. Liste minuscule (une ligne par clé) : lue SANS $filter, aucun enjeu d'index ni de seuil des 5000.",
+      "description": "CONFIGURATION APPLICATIVE (chantier §10.0, créée le 13/7/2026). Une ligne par clé (colonne Title). Ligne « ActiveQuarter » = trimestre actif de l'application : écrite par « npm run sp:rotate » À LA FIN de la rotation (après archivage et vidage réussis, confirmation BASCULER), lue par /api/me et /api/declare via api/src/shared/quarterConfig.ts (cache mémoire ~5 min, REPLI sur les variables d'environnement SP_CUMUL_* si la liste est illisible). C'est cette écriture qui bascule le portail : plus de variable à modifier, plus de redéploiement, plus de piège « l'ID prime sur le nom » (ID et nom écrits ensemble). Source de vérité PARTAGÉE avec la future app staff. Liste minuscule (une ligne par clé) : lue SANS $filter, aucun enjeu d'index ni de seuil des 5000. EXTENSION R2a (21/7/2026) : lignes PARAMÈTRES du moteur de rappels — clé dans Title, valeur TEXTE dans ParamValue. Clés du rappel 1 : « Reminder1Enabled » (true/false — interrupteur global §4.3, OFF au déploiement), « Reminder1MaxQueue » (entier — garde-fou §4.4 : abstention si la file de lettrage ToProcess dépasse ce seuil ; départ 60 ≈ 1,5 semaine du débit mesuré ~42/sem), « Reminder1MaxImportAgeDays » (entier — abstention si le dernier import CSV réel date de plus de N jours ; départ 9 = hebdo + lundi férié + battement). Semées par « npm run sp:rappels -- --init-params » (idempotent, ne modifie jamais une ligne existante). RÈGLE FAIL-SAFE du moteur : paramètre absent, illisible ou non parsable = ABSTENTION, jamais de défaut permissif en dur.",
       "columns": [
         {
           "name": "Title",
@@ -477,6 +482,11 @@
           "name": "RotationNote",
           "type": "text",
           "note": "Traçabilité : horodatage et origine de la dernière bascule (écrit par sp:rotate). Nom « RotationNote » et non « Note » pour éviter toute collision avec des noms internes SharePoint."
+        },
+        {
+          "name": "ParamValue",
+          "type": "text",
+          "note": "Valeur TEXTE du paramètre de la ligne (les lignes paramètres n'utilisent PAS Quarter/Year/CumulList*, réservées à ActiveQuarter). Convention : booléens « true »/« false » en toutes lettres, entiers en chiffres — le code parse STRICTEMENT et s'abstient au moindre doute (fail-safe §4.4). Une seule colonne générique = plus JAMAIS de provisioning pour ajouter un paramètre (rappel 2, MD, plans d'apurement…)."
         }
       ]
     },
@@ -514,6 +524,86 @@
           "name": "Detail",
           "type": "note",
           "note": "Contexte libre lisible par le staff (ex. stats du lot d'import : volume, % auto-imputé, % structuré). Documentation, jamais parsé par le code."
+        }
+      ]
+    },
+    {
+      "displayName": "Journal-Rappels",
+      "description": "JOURNAL DES ENVOIS du moteur de rappels (module 4, décision R2 du 21/7/2026) : une ligne par TENTATIVE D'ENVOI par dossier (FA) — la PREUVE exigée par la mise en demeure (§4.9 : prouver les rappels préalables par créance) et la matière de l'export contentieux (§4.11). Les colonnes de Soldes (Reminder1Date…) portent l'ÉTAT par mois ; ce journal porte l'HISTOIRE par envoi (contenu, destinataire, valideur). DOUBLE RÔLE décidé le 21/7 : journal ET file de travail du rappel 2 — l'approbation du matin écrit des lignes « Queued », le timer nocturne les revalide et les envoie (circuit « lot du matin, envoi la nuit N+1 »). ANTI-DOUBLE-ENVOI (même philosophie que le WAL de sp:paiements) : « Pending » est écrit AVANT sendMail, « Sent » APRÈS ; un crash entre les deux laisse une ligne Pending = le FA est mis en QUARANTAINE par tous les passages suivants jusqu'à résolution HUMAINE (marquer Sent + estampiller Soldes à la main, ou Failed). Écrivains : le moteur nocturne (« system ») et l'app staff (lots R2, visas MD — au nom du valideur). Volume ~dizaines de lignes/semaine : les index sont posés À LA CRÉATION (liste neuve = fenêtre idéale, §6.1).",
+      "columns": [
+        {
+          "name": "Title",
+          "type": "text",
+          "documentOnly": true,
+          "note": "Colonne intégrée. CLÉ DE TENTATIVE : <FA>-R<niveau>-<AAAAMMJJ>-<HHMMSS> (ex. FA00655210-R1-20260722-013045). PAS une clé d'idempotence : l'idempotence du moteur vient des estampilles Soldes (ReminderLevel) + de la quarantaine Pending — chaque tentative laisse SA ligne, y compris les échecs (preuve complète)."
+        },
+        {
+          "name": "FedasilNumber",
+          "type": "text",
+          "indexed": true,
+          "note": "FA du dossier. INDEXÉE À LA CRÉATION : (1) retrouver la ligne d'une tentative après création (Graph POST ne renvoyant pas l'item au client partagé, on relit par FA) ; (2) l'historique des rappels d'un dossier (fiche 360°, export contentieux §4.11)."
+        },
+        {
+          "name": "Level",
+          "type": "number",
+          "note": "Niveau de l'envoi : 1 = rappel 1, 2 = rappel 2, 3 = mise en demeure."
+        },
+        {
+          "name": "Channel",
+          "type": "choice",
+          "choices": [
+            "Email",
+            "Paper"
+          ],
+          "note": "Canal — CODES NEUTRES (l'interface traduit). Rappels 1-2 : Email. MD : Paper (marches 1-2 §4.8). ⚠ Écriture via Graph (moteur, portail) : la CHAÎNE ; via SDK staff : l'objet { Value } (piège n°14)."
+        },
+        {
+          "name": "SentDate",
+          "type": "dateTime",
+          "note": "Horodatage de l'envoi EFFECTIF (posé au passage à « Sent »). Vide sur Queued/Pending/Skipped/Failed."
+        },
+        {
+          "name": "MonthsCovered",
+          "type": "text",
+          "note": "Mois couverts par l'envoi, AAAAMM séparés par « ; » (ex. « 202604;202605 ») — le lien avec les lignes Soldes estampillées (§4.2 : un envoi par dossier, une trace par mois)."
+        },
+        {
+          "name": "TotalDue",
+          "type": "number",
+          "note": "Total restant dû des mois couverts, au moment de l'envoi (€, 2 décimales) — figé ici comme preuve, même si Soldes évolue ensuite."
+        },
+        {
+          "name": "Recipient",
+          "type": "text",
+          "note": "Adresse e-mail destinataire (rappels 1-2) telle qu'utilisée à l'envoi — preuve. Pour une MD papier : vide (l'adresse postale vit dans le dossier)."
+        },
+        {
+          "name": "Language",
+          "type": "text",
+          "note": "Langue de composition de l'envoi : « fr » / « nl » / « en » / « multi » (repli trilingue quand ContactLanguage est vide)."
+        },
+        {
+          "name": "ValidatedBy",
+          "type": "text",
+          "note": "« system » pour les envois automatiques du timer (rappel 1) ; NOM DU VALIDEUR pour les gestes humains (lot du rappel 2, visa MD — identité native de la Code App, module 6)."
+        },
+        {
+          "name": "Status",
+          "type": "choice",
+          "choices": [
+            "Queued",
+            "Pending",
+            "Sent",
+            "Skipped",
+            "Failed"
+          ],
+          "indexed": true,
+          "note": "CODES NEUTRES. « Queued » = lot approuvé en attente du timer (rappel 2) · « Pending » = écrit juste AVANT sendMail (anti-double-envoi : une ligne Pending survivante = crash = QUARANTAINE du FA, résolution humaine) · « Sent » = envoyé, Soldes estampillé · « Skipped » = retiré à la revalidation nocturne (ex. mois soldé entre l'approbation et l'envoi — journalisé, jamais silencieux) · « Failed » = sendMail en échec (retenté naturellement au passage suivant : les mois ne sont PAS estampillés). INDEXÉE À LA CRÉATION : la requête de quarantaine (Pending) et la file du timer (Queued)."
+        },
+        {
+          "name": "Note",
+          "type": "note",
+          "note": "Contexte libre : raison d'un Skipped, message d'erreur d'un Failed, référence de résolution d'une quarantaine. Documentation, jamais parsé."
         }
       ]
     }
