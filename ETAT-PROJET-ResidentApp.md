@@ -1225,6 +1225,25 @@ et rotation).
 
 ## 10. Reste à faire (priorisé)
 
+🔴 **AVANT toute mise en service du rappel 2 (v19, 22/7)** — trois points de
+vigilance ouverts, à ne pas perdre :
+1. **`PAYMENT_IBAN` et `PAYMENT_BENEFICIARY` absents** de la configuration de
+   test : le garde-fou « contexte d'envoi » les exige en mode réel (en
+   dry-run ils ne produisent qu'un `[À CONFIGURER]` dans l'aperçu).
+2. **La boucle complète app → moteur n'a pas encore été déroulée** : le 22/7 a
+   validé chaque moitié séparément (moteur testé sur une ligne `Queued` semée
+   à la main ; écran testé jusqu'à l'écriture). Reste à approuver depuis
+   l'onglet « Rappel 2 » puis à vérifier que `runReminder2` consomme ce lot.
+3. **L'e-mail du rappel 2 annonce une mise en demeure sous quinze jours**,
+   alors que le module correspondant (CONCEPTION §4.8) n'est pas construit :
+   allumer le rappel 2 crée une attente juridique que le service devra tenir,
+   au besoin manuellement. **Arbitrage hiérarchie avant allumage.**
+
+Les améliorations d'ergonomie de l'écran « Rappel 2 » (filtres, tri
+configurable, aperçu de l'e-mail, annulation d'une approbation) sont
+**différées délibérément** — liste complète dans CONCEPTION v11, module 4,
+« Backlog R3 ».
+
 ✅ **TERMINÉ (v5, validé en production)** : sélecteur de profils familiaux
 dans `Portail.tsx` (FA actif propagé et vérifié serveur) ; assouplissement de
 `App.tsx` (check-email informatif, formulaire minimal NN + e-mail + langue) ;
