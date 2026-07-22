@@ -41,7 +41,9 @@ import {
 } from "../../../scripts/lib/indicateurs";
 import {
   formatReminderSummary,
+  formatReminder2Summary,
   runReminder1,
+  runReminder2,
   type ReminderMailContext,
 } from "../../../scripts/lib/rappels";
 
@@ -209,6 +211,37 @@ export async function soldesNightly(
         `⚠ Moteur de rappels ÉCHOUÉ : ${
           err instanceof Error ? err.message : String(err)
         } — la synchro et les indicateurs de cette nuit, eux, sont intacts.`
+      );
+    }
+
+    // 4) RAPPEL 2 (module 4, chantier R3a) : APRÈS le rappel 1, il CONSOMME le
+    //    lot « Queued » validé le matin par un collaborateur (app staff, R3b)
+    //    et l'envoie — la nuit N+1. Même règle d'isolement : un échec du
+    //    rappel 2 ne marque JAMAIS la nuit « échouée », et n'affecte ni la
+    //    synchro, ni les indicateurs, ni le rappel 1 déjà passés. Interrupteur
+    //    PROPRE « Reminder2Enabled » (Config) : OFF -> abstention + estampille
+    //    « LastReminder2Run ». SOLDES_DRY_RUN=true force aussi le rappel 2 en
+    //    dry-run (revalidation et aperçu, rien n'est écrit ni envoyé).
+    try {
+      const mailCtx2: ReminderMailContext = {
+        senderUserId: (process.env["GRAPH_SENDER_USER_ID"] ?? "").trim(),
+        portalUrl: derivePortalUrl(),
+        paymentIban: (process.env["PAYMENT_IBAN"] ?? "").trim(),
+        paymentBeneficiary: (process.env["PAYMENT_BENEFICIARY"] ?? "").trim(),
+      };
+      const rappels2 = await runReminder2(cfg, graph, mailCtx2, { dryRun, log });
+      log(formatReminder2Summary(rappels2));
+      if (!rappels2.aborted && rappels2.failed > 0) {
+        context.warn(
+          `⚠ Rappel 2 : ${rappels2.failed} envoi(s) en échec — la ligne reste ` +
+            `« Failed » dans Journal-Rappels (résolution humaine).`
+        );
+      }
+    } catch (err) {
+      context.error(
+        `⚠ Moteur de rappel 2 ÉCHOUÉ : ${
+          err instanceof Error ? err.message : String(err)
+        } — la synchro, les indicateurs et le rappel 1 de cette nuit sont intacts.`
       );
     }
 

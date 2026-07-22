@@ -72,6 +72,7 @@ export const PARAM_KEYS = {
   enabled: "Reminder1Enabled",
   maxQueue: "Reminder1MaxQueue",
   maxImportAgeDays: "Reminder1MaxImportAgeDays",
+  enabled2: "Reminder2Enabled", // R3a (21/7) : interrupteur PROPRE du rappel 2
 } as const;
 
 /** Valeurs semées par --init-params (jamais modifiées si présentes). */
@@ -79,12 +80,14 @@ export const PARAM_DEFAULTS: Record<string, string> = {
   [PARAM_KEYS.enabled]: "false", // OFF au déploiement (décision du 21/7)
   [PARAM_KEYS.maxQueue]: "60", // ~1,5 semaine du débit mesuré (~42/sem)
   [PARAM_KEYS.maxImportAgeDays]: "9", // hebdo + lundi férié + battement
+  [PARAM_KEYS.enabled2]: "false", // R3a : OFF au déploiement (symétrique R1, §4.13)
 };
 
 /** Indicateurs lus (garde-fou) et écrits (estampille du moteur). */
 export const IND_LAST_IMPORT = "LastPaymentImport";
 export const IND_LAST_SYNC = "LastSoldesSync";
 export const IND_LAST_RUN = "LastReminder1Run";
+export const IND_LAST_RUN_2 = "LastReminder2Run"; // R3a : preuve de vie du rappel 2
 
 /** Colonnes attendues — contrôlées AVANT tout travail (message clair plutôt
  *  que « Graph 400 Field not recognized » au milieu du traitement). */
@@ -828,11 +831,14 @@ async function stampLastRun(
   numValue: number,
   textValue: string,
   scope: string,
-  detail: string
+  detail: string,
+  // R3a : par défaut « LastReminder1Run » — les appels R1 existants restent
+  // rigoureusement identiques ; le rappel 2 passe IND_LAST_RUN_2.
+  title: string = IND_LAST_RUN
 ): Promise<void> {
-  const existing = await readIndicateur(graph, siteId, indicateursListId, IND_LAST_RUN);
+  const existing = await readIndicateur(graph, siteId, indicateursListId, title);
   const fields = {
-    Title: IND_LAST_RUN,
+    Title: title,
     NumValue: numValue,
     TextValue: textValue,
     Scope: scope,
@@ -1288,6 +1294,813 @@ export function formatReminderSummary(r: Reminder1Result): string {
   if (r.quarantined.length) lines.push(` Quarantaine       : ${r.quarantined.length} (${r.quarantined.join(", ")})`);
   if (r.orphans.length) lines.push(` FA orphelins      : ${r.orphans.length}`);
   if (r.noEmail.length) lines.push(` Sans e-mail       : ${r.noEmail.length}`);
+  lines.push(
+    r.dryRun
+      ? ` Envoyables        : ${r.sent} dossier(s), ${r.monthsStamped} mois`
+      : ` Envoyés           : ${r.sent} dossier(s) · échecs : ${r.failed} · mois estampillés : ${r.monthsStamped}`
+  );
+  return lines.join("\n");
+}
+
+/* ==========================================================================
+ *  RAPPEL 2 (module 4, chantier R3a — 21/7/2026)
+ * --------------------------------------------------------------------------
+ *  Le rappel 2 n'est PAS automatique : le lot est validé d'un clic le matin
+ *  par un collaborateur (chantier R3b, app staff), qui écrit une ligne
+ *  « Queued » (Level 2) par dossier dans Journal-Rappels. Ce moteur-ci tourne
+ *  la NUIT N+1 : il CONSOMME le lot, il ne le fabrique pas (§4.9).
+ *
+ *  Circuit : lire les Queued Level 2 -> REVALIDER chaque mois couvert contre
+ *  la photo Soldes fraîche (encore dû, TOUJOURS ReminderLevel=1, hors plan) ->
+ *  WAL Queued->Pending->Sent/Failed -> estampiller Reminder2Date + niveau 2
+ *  sur les seuls mois envoyés -> estampille LastReminder2Run.
+ *
+ *  DÉLIBÉRÉMENT PARALLÈLE à runReminder1 (garde-fou, e-mail, estampille) pour
+ *  garder le rappel 1 — validé le 21/7 — rigoureusement FIGÉ. Interrupteur
+ *  PROPRE (Reminder2Enabled) mais seuils de fraîcheur PARTAGÉS avec R1. Une
+ *  unification des deux moteurs est consignée au backlog une fois R2 rodé.
+ * ========================================================================== */
+
+export type Reminder2Result = {
+  dryRun: boolean;
+  aborted: boolean;
+  abortReasons: string[];
+  guard: GuardCheck[];
+  windowLabel: string;
+  /** Lignes « Queued » niveau 2 lues dans Journal-Rappels. */
+  queuedRead: number;
+  quarantined: string[];
+  /** FA vus plusieurs fois en Queued dans le même passage (marqués Skipped). */
+  duplicates: string[];
+  noEmail: string[];
+  /** Dossiers dont TOUS les mois approuvés sont retombés (marqués Skipped). */
+  skippedStale: string[];
+  /** Dossiers dont MonthsCovered contenait au moins une entrée illisible. */
+  unreadable: string[];
+  /** Dossiers dont MonthsCovered n'avait AUCUN mois lisible (marqués Skipped). */
+  unusable: string[];
+  sent: number;
+  failed: number;
+  monthsStamped: number;
+};
+
+/** Une ligne « Queued » niveau 2 telle que R3b l'a écrite le matin. */
+type QueuedDossier = {
+  itemId: string;
+  attemptKey: string;
+  fa: string;
+  /** AAAAMM approuvés le matin (revalidés la nuit). */
+  monthsCovered: number[];
+  /** Valeur BRUTE de MonthsCovered — conservée pour le diagnostic et la Note. */
+  monthsCoveredRaw: string;
+  /** Entrées de MonthsCovered que le moteur n'a PAS su lire. Jamais perdues
+   *  en silence : journalisées, comptées, et consignées dans la Note. */
+  unreadableMonths: string[];
+  validatedBy: string;
+  recipientSnapshot: string;
+  languageSnapshot: string;
+};
+
+// --------------------------------------------------------------------------
+//  Paramètres du rappel 2 : interrupteur PROPRE + seuils PARTAGÉS (décision
+//  du 21/7). Parsing STRICT, même fail-safe que R1 (le doute vaut abstention).
+// --------------------------------------------------------------------------
+
+export async function loadReminder2Params(
+  graph: GraphClient,
+  siteId: string,
+  configListId: string
+): Promise<{ params: Reminder1Params | null; problems: string[] }> {
+  const items = await graph.getAllPages<ListItem>(
+    `/sites/${siteId}/lists/${configListId}/items` +
+      `?$expand=fields($select=Title,ParamValue)&$top=50`
+  );
+
+  const byKey = new Map<string, string>();
+  for (const it of items) {
+    const title = String(it.fields?.["Title"] ?? "").trim();
+    if (title) byKey.set(title.toLowerCase(), String(it.fields?.["ParamValue"] ?? "").trim());
+  }
+
+  const problems: string[] = [];
+  const rawOf = (key: string): string | null => {
+    if (!byKey.has(key.toLowerCase())) {
+      problems.push(
+        `ligne « ${key} » absente de Config (→ npm run sp:rappels -- --init-params)`
+      );
+      return null;
+    }
+    return byKey.get(key.toLowerCase()) ?? "";
+  };
+
+  const enabledRaw = rawOf(PARAM_KEYS.enabled2);
+  const queueRaw = rawOf(PARAM_KEYS.maxQueue);
+  const ageRaw = rawOf(PARAM_KEYS.maxImportAgeDays);
+
+  let enabled = false;
+  if (enabledRaw !== null) {
+    const v = enabledRaw.toLowerCase();
+    if (v === "true") enabled = true;
+    else if (v === "false") enabled = false;
+    else problems.push(`${PARAM_KEYS.enabled2} = « ${enabledRaw} » (attendu : true ou false)`);
+  }
+
+  const intOf = (key: string, raw: string | null): number => {
+    if (raw === null) return 0;
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n <= 0) {
+      problems.push(`${key} = « ${raw} » (entier strictement positif attendu)`);
+      return 0;
+    }
+    return n;
+  };
+  const maxQueue = intOf(PARAM_KEYS.maxQueue, queueRaw);
+  const maxImportAgeDays = intOf(PARAM_KEYS.maxImportAgeDays, ageRaw);
+
+  if (problems.length > 0) return { params: null, problems };
+  return { params: { enabled, maxQueue, maxImportAgeDays }, problems };
+}
+
+// --------------------------------------------------------------------------
+//  Lecture du lot du matin (Queued, niveau 2) et de la photo Soldes par FA
+// --------------------------------------------------------------------------
+
+async function readQueuedDossiers(
+  graph: GraphClient,
+  siteId: string,
+  journalListId: string
+): Promise<QueuedDossier[]> {
+  // Status est INDEXÉE à la création. Le niveau est filtré EN CODE (§6.1) :
+  // le volume Queued est minuscule (le lot humain d'une journée).
+  const items = await graph.getAllPages<ListItem>(
+    `/sites/${siteId}/lists/${journalListId}/items` +
+      `?$expand=fields($select=Title,FedasilNumber,Level,MonthsCovered,ValidatedBy,Recipient,Language,Status)` +
+      `&$filter=fields/Status eq 'Queued'&$top=500`
+  );
+
+  const out: QueuedDossier[] = [];
+  for (const it of items) {
+    const f = it.fields ?? {};
+    if (toNumber(f["Level"]) !== 2) continue; // R2 uniquement
+    const fa = String(f["FedasilNumber"] ?? "").trim();
+    if (!fa) continue;
+    // Lecture STRICTE de MonthsCovered (durcie le 22/7 après incident réel).
+    // Deux règles :
+    //  1. les ESPACES sont retirés avant conversion — « 202 510 » vient d'un
+    //     copier-coller depuis la colonne YearMonth, que SharePoint AFFICHE
+    //     avec un séparateur de milliers en locale française (et l'espace
+    //     insécable est INVISIBLE à l'écran) ;
+    //  2. le format attendu est EXACTEMENT AAAAMM (6 chiffres) — tout le reste
+    //     part dans « unreadableMonths » plutôt que d'être perdu en silence.
+    //     Un mois approuvé qui disparaît sans trace est un dossier non relancé
+    //     que PERSONNE ne voit : contraire à la règle « jamais silencieux ».
+    const monthsCoveredRaw = String(f["MonthsCovered"] ?? "");
+    const monthsCovered: number[] = [];
+    const unreadableMonths: string[] = [];
+    for (const token of monthsCoveredRaw.split(";")) {
+      const trimmed = token.trim();
+      if (trimmed === "") continue; // séparateur en trop : sans conséquence
+      const cleaned = trimmed.replace(/\s/g, ""); // \s couvre l'espace insécable
+      if (/^\d{6}$/.test(cleaned)) {
+        monthsCovered.push(Number(cleaned));
+      } else {
+        unreadableMonths.push(trimmed);
+      }
+    }
+    out.push({
+      itemId: it.id,
+      attemptKey: String(f["Title"] ?? "").trim(),
+      fa,
+      monthsCovered,
+      monthsCoveredRaw,
+      unreadableMonths,
+      validatedBy: String(f["ValidatedBy"] ?? "").trim(),
+      recipientSnapshot: String(f["Recipient"] ?? "").trim(),
+      languageSnapshot: String(f["Language"] ?? "").trim(),
+    });
+  }
+  return out;
+}
+
+async function fetchSoldesRowsByFa(
+  graph: GraphClient,
+  siteId: string,
+  soldesListId: string,
+  fa: string
+): Promise<ListItem[]> {
+  // FedasilNumber est INDEXÉE (§3.1) : une lecture par dossier Queued suffit,
+  // et le volume Queued est minuscule (quelques dizaines/semaine).
+  const select = SOLDES_R2_COLUMNS.join(",");
+  return graph.getAllPages<ListItem>(
+    `/sites/${siteId}/lists/${soldesListId}/items` +
+      `?$expand=fields($select=${select})` +
+      `&$filter=fields/FedasilNumber eq '${escapeODataString(fa)}'` +
+      `&$top=200`
+  );
+}
+
+// --------------------------------------------------------------------------
+//  E-mail du rappel 2 : ton FERME + annonce de la mise en demeure (§4.1/§4.3).
+//  Réutilise la table et les libellés communs de R1 (TEXTS) ; seuls l'intro et
+//  le paragraphe d'avertissement changent. R1 laissé FIGÉ (fonctions propres).
+// --------------------------------------------------------------------------
+
+const TEXTS_R2: Record<string, { intro: string; notice: string }> = {
+  fr: {
+    intro:
+      "Malgré notre premier rappel, la contribution financière des mois suivants reste (partiellement) impayée :",
+    notice:
+      "À défaut de paiement dans les quinze jours, une mise en demeure vous sera adressée par courrier recommandé, ce qui peut entraîner des frais supplémentaires et l'ouverture d'une procédure de recouvrement.",
+  },
+  nl: {
+    intro:
+      "Ondanks onze eerste herinnering blijft de financiële bijdrage voor de volgende maanden (gedeeltelijk) onbetaald:",
+    notice:
+      "Bij gebrek aan betaling binnen vijftien dagen ontvangt u een ingebrekestelling per aangetekende brief, wat bijkomende kosten en een invorderingsprocedure met zich kan meebrengen.",
+  },
+  en: {
+    intro:
+      "Despite our first reminder, the financial contribution for the following months remains (partially) unpaid:",
+    notice:
+      "If payment is not received within fifteen days, a formal notice (mise en demeure) will be sent to you by registered mail, which may entail additional costs and the initiation of recovery proceedings.",
+  },
+};
+
+const SUBJECTS_R2: Record<string, string> = {
+  fr: "Deuxième rappel — votre contribution financière",
+  nl: "Tweede herinnering — uw financiële bijdrage",
+  en: "Second reminder — your financial contribution",
+  multi: "Deuxième rappel / Tweede herinnering / Second reminder — contribution financière",
+};
+
+function blockHtmlR2(
+  lang: string,
+  firstName: string,
+  months: CandidateMonth[],
+  ctx: ReminderMailContext
+): string {
+  const t = TEXTS[lang]!;
+  const r2 = TEXTS_R2[lang]!;
+  const rows = months
+    .map(
+      (m) =>
+        `<tr><td style="padding:6px 10px;border:1px solid #ddd;">${htmlEscape(monthLabel(lang, m.month, m.year))}</td>` +
+        `<td style="padding:6px 10px;border:1px solid #ddd;text-align:right;">${euro(m.balance)}</td>` +
+        `<td style="padding:6px 10px;border:1px solid #ddd;font-family:monospace;">${htmlEscape(formatStructuredCom(m.structuredCom))}</td></tr>`
+    )
+    .join("");
+
+  return (
+    `<p>${htmlEscape(t.greeting(firstName))}</p>` +
+    `<p>${htmlEscape(r2.intro)}</p>` +
+    `<table style="border-collapse:collapse;margin:8px 0;">` +
+    `<tr>` +
+    `<th style="padding:6px 10px;border:1px solid #ddd;background:#644391;color:#fff;text-align:left;">${htmlEscape(t.colMonth)}</th>` +
+    `<th style="padding:6px 10px;border:1px solid #ddd;background:#644391;color:#fff;text-align:right;">${htmlEscape(t.colAmount)}</th>` +
+    `<th style="padding:6px 10px;border:1px solid #ddd;background:#644391;color:#fff;text-align:left;">${htmlEscape(t.colCom)}</th>` +
+    `</tr>${rows}</table>` +
+    `<p>${htmlEscape(t.payWith)}</p>` +
+    `<p style="margin-left:12px;">${htmlEscape(t.beneficiary)} : <strong>${htmlEscape(ctx.paymentBeneficiary || "[À CONFIGURER]")}</strong><br/>` +
+    `${htmlEscape(t.iban)} : <strong>${htmlEscape(ctx.paymentIban || "[À CONFIGURER]")}</strong></p>` +
+    `<p>${htmlEscape(t.portal)}<br/><a href="${htmlEscape(ctx.portalUrl || "#")}">${htmlEscape(ctx.portalUrl || "[À CONFIGURER]")}</a></p>` +
+    `<p style="color:#d1103b;font-weight:bold;">${htmlEscape(r2.notice)}</p>` +
+    `<p style="color:#676362;">${htmlEscape(t.alreadyPaid)}</p>`
+  );
+}
+
+/** Sujet + HTML du rappel 2. `language` null -> version TRILINGUE (repli sûr). */
+export function buildReminder2Email(
+  language: string | null,
+  firstName: string,
+  months: CandidateMonth[],
+  ctx: ReminderMailContext
+): { subject: string; html: string; languageUsed: string } {
+  if (language && TEXTS[language]) {
+    const html =
+      blockHtmlR2(language, firstName, months, ctx) +
+      `<p style="color:#676362;">${htmlEscape(TEXTS[language]!.signature)}</p>`;
+    return { subject: SUBJECTS_R2[language]!, html, languageUsed: language };
+  }
+  const parts = (["fr", "nl", "en"] as const).map((lang) =>
+    blockHtmlR2(lang, firstName, months, ctx)
+  );
+  const html =
+    parts.join(`<hr style="border:none;border-top:1px solid #ddd;margin:16px 0;"/>`) +
+    `<p style="color:#676362;">${htmlEscape(TEXTS["fr"]!.signature)}</p>`;
+  return { subject: SUBJECTS_R2["multi"]!, html, languageUsed: "multi" };
+}
+
+// --------------------------------------------------------------------------
+//  ORCHESTRATEUR DU RAPPEL 2
+// --------------------------------------------------------------------------
+
+export async function runReminder2(
+  cfg: Settings,
+  graph: GraphClient,
+  mailCtx: ReminderMailContext,
+  opts: Reminder1Options
+): Promise<Reminder2Result> {
+  const log = opts.log;
+  const now = opts.now ?? new Date();
+  const nowIso = now.toISOString();
+  const maxDetail = opts.maxDetail ?? 30;
+
+  const result: Reminder2Result = {
+    dryRun: opts.dryRun,
+    aborted: false,
+    abortReasons: [],
+    guard: [],
+    windowLabel: "",
+    queuedRead: 0,
+    quarantined: [],
+    duplicates: [],
+    noEmail: [],
+    skippedStale: [],
+    unreadable: [],
+    unusable: [],
+    sent: 0,
+    failed: 0,
+    monthsStamped: 0,
+  };
+
+  // --- Résolution du site et des listes -----------------------------------
+  const siteId = await getSiteId(graph, cfg, log);
+
+  const need = async (name: string): Promise<{ id: string }> => {
+    const list = await findListByName(graph, siteId, name);
+    if (!list) {
+      throw new SoldesSyncError(
+        `Liste « ${name} » introuvable.\n  → npm run sp:provision`
+      );
+    }
+    return list;
+  };
+
+  const [soldes, config, residents, paiements, indicateurs, journal] =
+    await Promise.all([
+      need(SOLDES_LIST_NAME),
+      need(CONFIG_LIST_NAME_R),
+      need(RESIDENTS_LIST_NAME),
+      need(PAIEMENTS_LIST_NAME),
+      need(INDICATEURS_LIST_NAME),
+      need(JOURNAL_LIST_NAME),
+    ]);
+
+  // R2 écrit Reminder2Date en plus des colonnes communes : on le vérifie AUSSI.
+  await assertListColumns(graph, siteId, soldes.id, SOLDES_LIST_NAME, [
+    ...SOLDES_R2_COLUMNS,
+    "Reminder2Date",
+  ]);
+  await assertListColumns(graph, siteId, journal.id, JOURNAL_LIST_NAME, JOURNAL_COLUMNS);
+  await assertListColumns(graph, siteId, config.id, CONFIG_LIST_NAME_R, ["Title", "ParamValue"]);
+  await assertListColumns(graph, siteId, residents.id, RESIDENTS_LIST_NAME, [
+    "FedasilNumber",
+    "FirstName",
+    "Email",
+    "ContactLanguage",
+  ]);
+
+  // --- Garde-fou §4.4 (interrupteur Reminder2Enabled, seuils partagés) -----
+  const { params, problems } = await loadReminder2Params(graph, siteId, config.id);
+
+  result.guard.push({
+    label: "Paramètres Config (rappel 2)",
+    ok: params !== null,
+    blocking: true,
+    detail:
+      params !== null
+        ? `enabled2=${params.enabled} · maxQueue=${params.maxQueue} · maxImportAge=${params.maxImportAgeDays} j`
+        : problems.join(" ; "),
+  });
+
+  result.guard.push({
+    label: "Interrupteur Reminder2Enabled",
+    ok: params?.enabled === true,
+    blocking: true,
+    detail:
+      params === null
+        ? "non évaluable (paramètres invalides)"
+        : params.enabled
+          ? "ON"
+          : "OFF (normal tant que le rappel 2 n'est pas mis en service)",
+  });
+
+  const queueCount = await countLettrageQueue(graph, siteId, paiements.id);
+  result.guard.push({
+    label: "File de lettrage (ToProcess)",
+    ok: params !== null && queueCount <= params.maxQueue,
+    blocking: true,
+    detail:
+      params === null
+        ? `${queueCount} en file (seuil non évaluable)`
+        : `${queueCount} en file (seuil ${params.maxQueue})`,
+  });
+
+  const lastImport = await readIndicateur(graph, siteId, indicateurs.id, IND_LAST_IMPORT);
+  const importAgeDays =
+    lastImport?.computedAt != null
+      ? Math.floor((now.getTime() - lastImport.computedAt.getTime()) / 86_400_000)
+      : null;
+  result.guard.push({
+    label: "Fraîcheur de l'import bancaire",
+    ok: params !== null && importAgeDays !== null && importAgeDays <= params.maxImportAgeDays,
+    blocking: true,
+    detail:
+      importAgeDays === null
+        ? `aucun import réel journalisé (${IND_LAST_IMPORT} absent — pas de relance sans preuve de fraîcheur)`
+        : `dernier import il y a ${importAgeDays} j` +
+          (lastImport?.textValue ? ` (${lastImport.textValue})` : "") +
+          (params ? ` — seuil ${params.maxImportAgeDays} j` : ""),
+  });
+
+  const lastSync = await readIndicateur(graph, siteId, indicateurs.id, IND_LAST_SYNC);
+  const syncAgeHours =
+    lastSync?.computedAt != null
+      ? Math.floor((now.getTime() - lastSync.computedAt.getTime()) / 3_600_000)
+      : null;
+  result.guard.push({
+    label: "Fraîcheur de la synchro Soldes (avertissement)",
+    ok: syncAgeHours !== null && syncAgeHours <= 48,
+    blocking: false,
+    detail:
+      syncAgeHours === null
+        ? `${IND_LAST_SYNC} absent`
+        : `dernière synchro il y a ${syncAgeHours} h`,
+  });
+
+  const mailProblems: string[] = [];
+  if (!mailCtx.senderUserId) mailProblems.push("GRAPH_SENDER_USER_ID");
+  if (!mailCtx.paymentIban) mailProblems.push("PAYMENT_IBAN");
+  if (!mailCtx.paymentBeneficiary) mailProblems.push("PAYMENT_BENEFICIARY");
+  if (!mailCtx.portalUrl) mailProblems.push("PORTAL_URL / INVITE_REDIRECT_URL");
+  result.guard.push({
+    label: "Contexte d'envoi (identifiants e-mail/virement)",
+    ok: mailProblems.length === 0,
+    blocking: !opts.dryRun,
+    detail:
+      mailProblems.length === 0 ? "complet" : `manquant : ${mailProblems.join(", ")}`,
+  });
+
+  let blockers = result.guard.filter((c) => c.blocking && !c.ok);
+  if (opts.dryRun) {
+    blockers = blockers.filter((c) => c.label !== "Interrupteur Reminder2Enabled");
+    if (opts.skipGuard) blockers = [];
+  }
+
+  const active = await readActiveQuarter(graph, siteId);
+  result.windowLabel = windowLabelOf(active);
+
+  if (blockers.length > 0) {
+    result.aborted = true;
+    result.abortReasons = blockers.map((c) => `${c.label} : ${c.detail}`);
+    log("");
+    log("⛔ ABSTENTION du rappel 2 (garde-fou §4.4) :");
+    for (const r of result.abortReasons) log(`   · ${r}`);
+    if (!opts.dryRun) {
+      await stampLastRun(
+        graph,
+        siteId,
+        indicateurs.id,
+        nowIso,
+        0,
+        `ABSTENTION : ${blockers[0]!.label}`,
+        result.windowLabel,
+        result.abortReasons.join("\n"),
+        IND_LAST_RUN_2
+      );
+      log(`   Estampille ${IND_LAST_RUN_2} posée.`);
+    }
+    return result;
+  }
+
+  // --- Lot du matin --------------------------------------------------------
+  const queued = await readQueuedDossiers(graph, siteId, journal.id);
+  result.queuedRead = queued.length;
+  log("");
+  log(`Fenêtre : ${result.windowLabel} (trimestre actif T${active.quarter} ${active.year})`);
+  log(`Lot du matin : ${queued.length} ligne(s) « Queued » niveau 2 à traiter.`);
+
+  const contacts = await readResidentContacts(graph, siteId, residents.id, log);
+  const quarantined = await readQuarantinedFas(graph, siteId, journal.id);
+
+  log("");
+  log(
+    opts.dryRun
+      ? "DRY-RUN — revalidation et aperçu (rien n'est écrit ni envoyé) :"
+      : "ENVOI de la nuit N+1 :"
+  );
+
+  const processedFas = new Set<string>();
+  let detailShown = 0;
+
+  for (const q of queued) {
+    if (quarantined.has(q.fa)) {
+      result.quarantined.push(q.fa);
+      log(`   · ${q.fa} : quarantaine (ligne Pending préexistante) — laissée Queued.`);
+      continue;
+    }
+    if (processedFas.has(q.fa)) {
+      result.duplicates.push(q.fa);
+      log(`   · ${q.fa} : doublon Queued défensif — ignoré (Skipped).`);
+      if (!opts.dryRun) {
+        await graph.write(
+          "PATCH",
+          `/sites/${siteId}/lists/${journal.id}/items/${q.itemId}/fields`,
+          {
+            Status: "Skipped",
+            Note: "Doublon Queued (une seule ligne rappel 2 par FA et par passage).",
+          }
+        );
+      }
+      continue;
+    }
+    processedFas.add(q.fa);
+
+    // Entrée(s) illisible(s) : AVERTIR, toujours — même si d'autres mois de la
+    // même ligne sont exploitables. Le mois perdu est consigné dans la Note.
+    if (q.unreadableMonths.length > 0) {
+      result.unreadable.push(q.fa);
+      log(
+        `   ⚠ ${q.fa} : MonthsCovered — entrée(s) illisible(s) ` +
+          `${q.unreadableMonths.map((s) => `« ${s} »`).join(", ")} ` +
+          `(format attendu : AAAAMM, ex. 202510).`
+      );
+    }
+
+    // Aucun mois lisible : la ligne est inexploitable. On l'écarte avec une
+    // raison EXPLICITE (et non le message « soldé/plan » qui serait faux).
+    if (q.monthsCovered.length === 0) {
+      result.unusable.push(q.fa);
+      log(`   · ${q.fa} : aucun mois lisible dans MonthsCovered → Skipped.`);
+      if (!opts.dryRun) {
+        await graph.write(
+          "PATCH",
+          `/sites/${siteId}/lists/${journal.id}/items/${q.itemId}/fields`,
+          {
+            Status: "Skipped",
+            Note:
+              `MonthsCovered inexploitable : « ${q.monthsCoveredRaw} ». ` +
+              `Format attendu : AAAAMM séparés par « ; » (ex. 202510;202511).`,
+          }
+        );
+      }
+      continue;
+    }
+
+    // Revalidation §4.9 contre la photo Soldes fraîche.
+    const rows = await fetchSoldesRowsByFa(graph, siteId, soldes.id, q.fa);
+    const byYm = new Map<number, CandidateMonth>();
+    for (const it of rows) {
+      const f = it.fields ?? {};
+      const ym = toNumber(f["YearMonth"]);
+      const payStatus = String(f["PayStatus"] ?? "").trim();
+      const balance = round2(toNumber(f["Balance"]));
+      const level = toNumber(f["ReminderLevel"]);
+      const plan = String(f["PaymentPlanRef"] ?? "").trim();
+      // Encore dû, TOUJOURS au niveau 1 (jamais sauter d'étape), hors plan.
+      if (
+        (payStatus === "Unpaid" || payStatus === "Partial") &&
+        balance > 0.004 &&
+        level === 1 &&
+        plan === ""
+      ) {
+        byYm.set(ym, {
+          itemId: it.id,
+          title: String(f["Title"] ?? "").trim(),
+          fa: q.fa,
+          year: toNumber(f["Year"]),
+          month: toNumber(f["Month"]),
+          yearMonth: ym,
+          balance,
+          structuredCom: String(f["StructuredCom"] ?? "").trim(),
+          dueDateIso: "",
+        });
+      }
+    }
+
+    const validMonths: CandidateMonth[] = [];
+    for (const ym of q.monthsCovered) {
+      const row = byYm.get(ym);
+      if (row) validMonths.push(row);
+    }
+    validMonths.sort((a, b) => a.yearMonth - b.yearMonth);
+
+    const contact = contacts.get(q.fa);
+    const email = contact?.email ?? null;
+    const firstName = contact?.firstName ?? "";
+    const language = contact?.language ?? null;
+
+    if (!email) {
+      result.noEmail.push(q.fa);
+      log(`   · ${q.fa} : sans adresse e-mail à l'envoi → Skipped.`);
+      if (!opts.dryRun) {
+        await graph.write(
+          "PATCH",
+          `/sites/${siteId}/lists/${journal.id}/items/${q.itemId}/fields`,
+          {
+            Status: "Skipped",
+            Note: "Sans adresse e-mail à l'envoi (ou FA absent de Residents List).",
+          }
+        );
+      }
+      continue;
+    }
+
+    if (validMonths.length === 0) {
+      result.skippedStale.push(q.fa);
+      log(
+        `   · ${q.fa} : aucun des mois approuvés (${q.monthsCovered.join(", ")}) ` +
+          `n'est encore à relancer (soldé / sous plan / déjà escaladé) → Skipped.`
+      );
+      if (!opts.dryRun) {
+        await graph.write(
+          "PATCH",
+          `/sites/${siteId}/lists/${journal.id}/items/${q.itemId}/fields`,
+          {
+            Status: "Skipped",
+            Note:
+              `Revalidation nocturne : aucun des mois approuvés ` +
+              `(${q.monthsCovered.join(", ")}) n'est encore à relancer ` +
+              `(soldé, sous plan, déjà escaladé, ou absent de Soldes).`,
+          }
+        );
+      }
+      continue;
+    }
+
+    const mail = buildReminder2Email(language, firstName, validMonths, mailCtx);
+    const totalDue = round2(validMonths.reduce((s, m) => s + m.balance, 0));
+    const sentMonths = validMonths.map((m) => String(m.yearMonth)).join(";");
+    const dropped = q.monthsCovered.length - validMonths.length;
+
+    if (detailShown < maxDetail) {
+      log(
+        `   · ${q.fa} · ${validMonths.length} mois (${sentMonths})` +
+          (dropped > 0 ? ` [${dropped} retiré(s)]` : "") +
+          ` · ${euro(totalDue)} · ${maskEmail(email)} · ${mail.languageUsed}`
+      );
+      detailShown++;
+      if (detailShown === maxDetail && queued.length > maxDetail) {
+        log(`   … et d'autres dossiers`);
+      }
+    }
+
+    if (opts.dryRun) {
+      result.sent++;
+      result.monthsStamped += validMonths.length;
+      continue;
+    }
+
+    // WAL : Queued -> Pending AVANT sendMail (anti-double-envoi).
+    await graph.write(
+      "PATCH",
+      `/sites/${siteId}/lists/${journal.id}/items/${q.itemId}/fields`,
+      { Status: "Pending" }
+    );
+
+    let sendOk = true;
+    let sendError = "";
+    try {
+      await graph.write(
+        "POST",
+        `/users/${encodeURIComponent(mailCtx.senderUserId)}/sendMail`,
+        {
+          message: {
+            subject: mail.subject,
+            body: { contentType: "HTML", content: mail.html },
+            toRecipients: [{ emailAddress: { address: email } }],
+          },
+          saveToSentItems: false,
+        }
+      );
+    } catch (err) {
+      sendOk = false;
+      sendError = err instanceof Error ? err.message : String(err);
+    }
+
+    if (!sendOk) {
+      result.failed++;
+      log(`   ✗ ${q.fa} : échec sendMail — ${sendError.slice(0, 160)}`);
+      await graph.write(
+        "PATCH",
+        `/sites/${siteId}/lists/${journal.id}/items/${q.itemId}/fields`,
+        { Status: "Failed", Note: sendError.slice(0, 2000) }
+      );
+      await pause(SEND_PACE_MS);
+      continue;
+    }
+
+    // Sent : on consigne les mois RÉELLEMENT couverts (preuve §4.9).
+    const patchFields: Record<string, unknown> = {
+      Status: "Sent",
+      SentDate: nowIso,
+      MonthsCovered: sentMonths,
+      TotalDue: totalDue,
+      Language: mail.languageUsed,
+    };
+    const notes: string[] = [];
+    if (dropped > 0) {
+      notes.push(
+        `${dropped} mois retiré(s) à la revalidation nocturne (soldé(s)/sous plan/déjà escaladé(s)).`
+      );
+    }
+    if (q.unreadableMonths.length > 0) {
+      // Le mois illisible n'est PAS parti : la trace doit rester sur la preuve.
+      notes.push(
+        `Entrée(s) MonthsCovered illisible(s), donc NON envoyée(s) : ` +
+          `${q.unreadableMonths.join(", ")} (format attendu AAAAMM).`
+      );
+    }
+    if (notes.length > 0) patchFields["Note"] = notes.join(" ");
+    await graph.write(
+      "PATCH",
+      `/sites/${siteId}/lists/${journal.id}/items/${q.itemId}/fields`,
+      patchFields
+    );
+
+    // Estampilles Soldes : la machine à états avance au niveau 2 (§4.9).
+    for (const m of validMonths) {
+      await graph.write(
+        "PATCH",
+        `/sites/${siteId}/lists/${soldes.id}/items/${m.itemId}/fields`,
+        { ReminderLevel: 2, Reminder2Date: nowIso }
+      );
+      result.monthsStamped++;
+    }
+    result.sent++;
+    await pause(SEND_PACE_MS);
+  }
+
+  if (result.quarantined.length > 0) {
+    log("");
+    log(`⚠ QUARANTAINE (ligne(s) Pending dans ${JOURNAL_LIST_NAME}) : ${result.quarantined.join(", ")}`);
+    log("   → Résolution HUMAINE requise avant que ces FA repassent en rappel 2.");
+  }
+
+  if (!opts.dryRun) {
+    const text =
+      result.failed > 0
+        ? `${result.sent} envoi(s), ${result.failed} échec(s)`
+        : `${result.sent} envoi(s)`;
+    await stampLastRun(
+      graph,
+      siteId,
+      indicateurs.id,
+      nowIso,
+      result.sent,
+      text,
+      result.windowLabel,
+      `Lot : ${result.queuedRead} · mois estampillés : ${result.monthsStamped}` +
+        ` · ignorés (soldé/plan) : ${result.skippedStale.length} · sans e-mail : ${result.noEmail.length}` +
+        (result.unreadable.length ? ` · MonthsCovered illisible : ${result.unreadable.join(", ")}` : "") +
+        (result.unusable.length ? ` · lignes inexploitables : ${result.unusable.length}` : "") +
+        (result.duplicates.length ? ` · doublons : ${result.duplicates.length}` : "") +
+        (result.quarantined.length ? ` · quarantaine : ${result.quarantined.join(", ")}` : ""),
+      IND_LAST_RUN_2
+    );
+    log("");
+    log(`Estampille ${IND_LAST_RUN_2} posée : ${text}.`);
+  }
+
+  return result;
+}
+
+// --------------------------------------------------------------------------
+//  Résumé lisible du rappel 2 (CLI et journal de la Function)
+// --------------------------------------------------------------------------
+
+export function formatReminder2Summary(r: Reminder2Result): string {
+  const lines: string[] = [];
+  lines.push("");
+  lines.push("──────────────────────────────────────────────────");
+  lines.push(
+    r.dryRun
+      ? "RÉSUMÉ RAPPEL 2 (DRY-RUN — rien n'a été écrit ni envoyé)"
+      : "RÉSUMÉ DE L'ENVOI — RAPPEL 2"
+  );
+  lines.push("──────────────────────────────────────────────────");
+  for (const c of r.guard) {
+    const mark = c.ok ? "✓" : c.blocking ? "✗" : "⚠";
+    lines.push(` ${mark} ${c.label} — ${c.detail}`);
+  }
+  if (r.aborted) {
+    lines.push("");
+    lines.push(" ⛔ ABSTENTION — aucun envoi, aucune écriture de rappel 2.");
+    return lines.join("\n");
+  }
+  lines.push("");
+  lines.push(` Fenêtre           : ${r.windowLabel}`);
+  lines.push(` Lot « Queued »    : ${r.queuedRead} ligne(s) niveau 2`);
+  if (r.quarantined.length) lines.push(` Quarantaine       : ${r.quarantined.length} (${r.quarantined.join(", ")})`);
+  if (r.duplicates.length) lines.push(` Doublons ignorés  : ${r.duplicates.length}`);
+  if (r.skippedStale.length) lines.push(` Ignorés (soldé/plan) : ${r.skippedStale.length}`);
+  if (r.noEmail.length) lines.push(` Sans e-mail       : ${r.noEmail.length}`);
+  if (r.unreadable.length)
+    lines.push(
+      ` ⚠ MonthsCovered illisible : ${r.unreadable.length} (${r.unreadable.join(", ")})`
+    );
+  if (r.unusable.length)
+    lines.push(` ⚠ Lignes inexploitables : ${r.unusable.length} (${r.unusable.join(", ")})`);
   lines.push(
     r.dryRun
       ? ` Envoyables        : ${r.sent} dossier(s), ${r.monthsStamped} mois`

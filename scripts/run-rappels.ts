@@ -30,9 +30,19 @@
  *        sur chaque ligne Soldes couverte, pose « LastReminder1Run ».
  *        Ne fait RIEN si Reminder1Enabled n'est pas « true » dans Config.
  *
- *    npm run sp:rappels -- --init-params         sème les 3 lignes paramètres
+ *    npm run sp:rappels -- --rappel2             CIBLE LE RAPPEL 2 (R3a) au
+ *        lieu du rappel 1. Combinable avec --envoyer / --sans-garde-fou /
+ *        --liste-complete. Le rappel 2 ne SÉLECTIONNE pas : il CONSOMME le lot
+ *        « Queued » (niveau 2) validé le matin (app staff), revalide chaque
+ *        mois contre Soldes, et — en --envoyer — envoie, estampille
+ *        Reminder2Date/niveau 2, pose « LastReminder2Run ». Interrupteur
+ *        propre « Reminder2Enabled » (OFF au déploiement).
+ *
+ *    npm run sp:rappels -- --init-params         sème les 4 lignes paramètres
  *        de Config si elles manquent (Reminder1Enabled=false,
- *        Reminder1MaxQueue=60, Reminder1MaxImportAgeDays=9) puis s'arrête.
+ *        Reminder1MaxQueue=60, Reminder1MaxImportAgeDays=9,
+ *        Reminder2Enabled=false) puis s'arrête. Les seuils de fraîcheur
+ *        (MaxQueue, MaxImportAgeDays) sont PARTAGÉS par les deux rappels.
  *        Idempotent : une ligne existante n'est JAMAIS modifiée.
  *
  *    npm run sp:rappels -- --liste-complete      détaille TOUS les dossiers
@@ -65,8 +75,10 @@ import {
   CONFIG_LIST_NAME_R,
   findConfigListId,
   formatReminderSummary,
+  formatReminder2Summary,
   initReminder1Params,
   runReminder1,
+  runReminder2,
   type ReminderMailContext,
 } from "./lib/rappels.js";
 
@@ -156,13 +168,14 @@ const known = new Set([
   "--sans-garde-fou",
   "--init-params",
   "--liste-complete",
+  "--rappel2",
 ]);
 for (const a of args) {
   if (!known.has(a)) {
     fail(
       `Argument inconnu : « ${a} ».\n` +
         "Arguments acceptés : --envoyer · --sans-garde-fou (dry-run " +
-        "uniquement) · --init-params · --liste-complete"
+        "uniquement) · --rappel2 · --init-params · --liste-complete"
     );
   }
 }
@@ -171,6 +184,7 @@ const envoyer = args.includes("--envoyer");
 const sansGardeFou = args.includes("--sans-garde-fou");
 const initParams = args.includes("--init-params");
 const listeComplete = args.includes("--liste-complete");
+const rappel2 = args.includes("--rappel2");
 
 if (envoyer && sansGardeFou) {
   fail(
@@ -179,7 +193,7 @@ if (envoyer && sansGardeFou) {
       "relancer un résident qui a payé)."
   );
 }
-if (initParams && (envoyer || sansGardeFou)) {
+if (initParams && (envoyer || sansGardeFou || rappel2)) {
   fail("--init-params s'utilise seul (il sème les paramètres puis s'arrête).");
 }
 
@@ -194,14 +208,14 @@ async function main(): Promise<void> {
 
   if (initParams) {
     log("");
-    log(`Semis des paramètres du rappel 1 dans « ${CONFIG_LIST_NAME_R} » :`);
+    log(`Semis des paramètres du moteur de rappels dans « ${CONFIG_LIST_NAME_R} » :`);
     const { siteId, configListId } = await findConfigListId(graph, cfg, log);
     const created = await initReminder1Params(graph, siteId, configListId, log);
     log("");
     log(
       created > 0
-        ? `✓ ${created} ligne(s) créée(s). L'interrupteur est OFF : le moteur ne peut rien envoyer.`
-        : "✓ Rien à créer : les 3 lignes existent déjà (valeurs conservées)."
+        ? `✓ ${created} ligne(s) créée(s). Les interrupteurs sont OFF : aucun rappel ne peut partir.`
+        : "✓ Rien à créer : les 4 lignes existent déjà (valeurs conservées)."
     );
     return;
   }
@@ -213,25 +227,36 @@ async function main(): Promise<void> {
     paymentBeneficiary: (values["PAYMENT_BENEFICIARY"] ?? "").trim(),
   };
 
+  const cible = rappel2 ? "rappel 2" : "rappel 1";
   log("");
   log(
     envoyer
-      ? "MODE RÉEL (--envoyer) — envois, journal et estampilles."
-      : "MODE DRY-RUN (défaut) — rien n'est écrit, rien n'est envoyé." +
+      ? `MODE RÉEL (--envoyer) — ${cible} : envois, journal et estampilles.`
+      : `MODE DRY-RUN (défaut) — ${cible} : rien n'est écrit, rien n'est envoyé.` +
           (sansGardeFou ? " Garde-fou ÉVALUÉ mais non bloquant (--sans-garde-fou)." : "")
   );
 
-  const result = await runReminder1(cfg, graph, mailCtx, {
+  const opts = {
     dryRun: !envoyer,
     skipGuard: sansGardeFou,
     maxDetail: listeComplete ? Number.MAX_SAFE_INTEGER : 30,
     log,
-  });
+  };
 
-  console.log(formatReminderSummary(result));
-
-  if (!result.aborted && result.failed > 0) {
-    process.exitCode = 1; // échec partiel visible d'un `&&` ou d'un cron
+  // Deux chemins distincts (plutôt qu'un ternaire) pour que TypeScript garde le
+  // type de résultat précis à chaque branche : Reminder1Result | Reminder2Result.
+  if (rappel2) {
+    const result = await runReminder2(cfg, graph, mailCtx, opts);
+    console.log(formatReminder2Summary(result));
+    if (!result.aborted && result.failed > 0) {
+      process.exitCode = 1; // échec partiel visible d'un `&&` ou d'un cron
+    }
+  } else {
+    const result = await runReminder1(cfg, graph, mailCtx, opts);
+    console.log(formatReminderSummary(result));
+    if (!result.aborted && result.failed > 0) {
+      process.exitCode = 1; // échec partiel visible d'un `&&` ou d'un cron
+    }
   }
 }
 
