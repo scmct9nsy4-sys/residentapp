@@ -1,5 +1,21 @@
 # ÉTAT DU PROJET — ResidentApp (Fedasil)
 
+**Version 19 — 22 juillet 2026** (remplace la v18 — session « module 4,
+chantier R3 : rappel 2 (lot du matin, envoi la nuit N+1) ». Portail (R3a) :
+`runReminder2` dans `scripts/lib/rappels.ts` (consomme les lignes `Queued`
+niveau 2 du journal, REVALIDE chaque mois contre la photo Soldes fraîche,
+WAL `Pending`→`Sent`/`Failed`, estampille `Reminder2Date` + niveau 2),
+4ᵉ étape dans `soldesNightly.ts`, drapeau `--rappel2` du CLI, interrupteur
+PROPRE `Reminder2Enabled` (OFF) avec seuils de fraîcheur PARTAGÉS avec R1,
+indicateur `LastReminder2Run`, script de diagnostic `debug-rappel2.ts`.
+Lecture STRICTE de `MonthsCovered` (AAAAMM, espaces nettoyés, entrées
+illisibles journalisées — incident réel du 22/7). Staff (R3b) :
+`Journal-Rappels` branchée en 10ᵉ source, `src/data/rappels.ts`,
+5ᵉ onglet « Rappel 2 » (`Rappel2View.tsx`) — **premier écran de l'app staff
+qui ÉCRIT**. Validé en dry-run de bout en bout, cas positif ET négatif
+(mois payé entre-temps → `Skipped`). CONCEPTION v11, SETUP v8. Historique
+v18 ci-dessous.)
+
 **Version 18 — 21 juillet 2026 (soir)** (remplace la v17 — session « module 4
 staff, chantier R2 : moteur du rappel 1 ». Portail : schéma étendu (`ParamValue`
 sur Config, `ContactLanguage` sur Residents List, liste `Journal-Rappels`), lib
@@ -1301,6 +1317,59 @@ résident) ; éclatement d'`App.css` par écran (au-delà de ~1 500 lignes) ;
 **consolidation Residents List** (61 lignes en DOUBLON de FA détectées par le
 calcul + fusion de la liste des désinscrits — en attendant, population « sans
 déclaration » = toute la liste).
+
+⚠ **Photo du projet Claude — trou constaté le 22/7 (portail).** Le dépôt staff
+a son `sync-projet-claude.sh` ; le dépôt PORTAIL n'en a pas : ses fichiers sont
+choisis à la main. Conséquence vécue : `scripts/lib/rappels.ts` (le moteur,
+livré en R2a le 21/7) n'a jamais été photographié — il a fallu le redemander en
+séance le 22/7 avant de pouvoir construire R3a, la règle §11quater interdisant
+de le reconstruire de mémoire. **Fichiers portail à monter systématiquement**,
+en plus de ceux déjà présents : `scripts/lib/rappels.ts`,
+`scripts/run-rappels.ts`, `scripts/debug-rappel2.ts`. **Backlog** : doter le
+dépôt portail de son propre script de synchro, symétrique de celui du staff —
+tant que la sélection dépend d'une mémoire humaine, l'oubli se reproduira.
+
+✅ **TERMINÉ (v19, 22/7) — Module 4 R3 : rappel 2 (portail + staff).**
+Circuit « lot du matin validé d'un clic, envoi la nuit N+1 » (CONCEPTION
+§4.3/§4.9), livré en deux temps dans la même session.
+
+**R3a (portail)** — `runReminder2` dans `scripts/lib/rappels.ts` : il ne
+SÉLECTIONNE pas, il CONSOMME les lignes `Queued` niveau 2 du journal écrites
+le matin par l'app staff. Pour chaque ligne, il REVALIDE chaque mois couvert
+contre la photo Soldes de la nuit — encore dû, `ReminderLevel === 1`
+(jamais sauter d'étape), hors plan — puis WAL `Queued`→`Pending`→`Sent`/
+`Failed`, estampille `Reminder2Date` + `ReminderLevel = 2` sur les SEULS mois
+envoyés. Tous les mois retombés → ligne `Skipped` avec sa raison.
+E-mail au ton ferme annonçant la mise en demeure (rouge Fedasil `#d1103b`),
+FR/NL/EN + repli trilingue. 4ᵉ étape dans `soldesNightly.ts` (même isolement
+que le rappel 1), drapeau `--rappel2` du CLI, indicateur `LastReminder2Run`.
+Interrupteur **PROPRE** `Reminder2Enabled` (OFF au déploiement, symétrique de
+R1) mais seuils de fraîcheur **PARTAGÉS** avec R1 (même mesure, moins de
+boutons à mal régler).
+
+**R3b (staff)** — `Journal-Rappels` branchée en **10ᵉ source** (§8 du SETUP :
+piège n°11 NON déclenché, le CLI normalise désormais à l'identique) ;
+`src/data/rappels.ts` (assemblage du lot + writer `Queued`) ; 5ᵉ onglet
+« Rappel 2 » (`Rappel2View.tsx`), aligné sur `RecouvrementView`. C'est le
+**PREMIER écran de l'app staff qui écrit** : colonnes Choice en `{ Value }`
+(piège n°14 reconfirmé par le modèle généré), `ValidatedBy` depuis
+`getContext().user` du SDK, `Author` natif comme preuve de fond.
+
+**Validation (22/7, dry-run réel)** : cas positif (`1 mois (202510) ·
+381,31 € · multi`) ET cas négatif — mois passé à `Paid` → `Skipped`, aucun
+envoi. Le pire scénario du recouvrement (relancer quelqu'un qui a payé entre
+l'approbation et la nuit) est donc démontré impossible, pas supposé.
+
+⚠ **Incident et durcissement (22/7)** : un `MonthsCovered` saisi à la main
+contenait une **espace insécable** (`202 510`), copiée depuis la colonne
+`YearMonth` que SharePoint AFFICHE avec séparateur de milliers en locale
+française. Le moteur perdait le mois EN SILENCE sous un message trompeur.
+Corrigé : lecture stricte `AAAAMM` avec nettoyage des espaces (`\s` couvre
+l'insécable), entrées illisibles **journalisées, comptées et consignées dans
+la `Note`** ; une ligne sans aucun mois lisible est `Skipped` avec sa valeur
+brute citée. Le writer staff, lui, écrit depuis des NOMBRES : le risque
+disparaît en production. **Contrat d'interface entre les deux dépôts :
+`MonthsCovered` = AAAAMM séparés par `;`.**
 
 ✅ **TERMINÉ (v18, 21/7 soir) — Module 4 R2 : moteur du rappel 1 (portail +
 staff).** Portail : schéma étendu (`ParamValue` sur Config, `ContactLanguage`
